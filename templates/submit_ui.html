@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Register Vehicle | Parking ANPR</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .container {
+            max-width: 560px;
+            width: 100%;
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        .header { padding: 1.5rem 2rem; border-bottom: 1px solid #eef2f6; }
+        .header h1 { font-size: 1.4rem; color: #1a2634; margin-bottom: 0.25rem; }
+        .header p { color: #6b7a88; font-size: 0.9rem; }
+        .header a { color: #3b82f6; text-decoration: none; font-size: 0.85rem; }
+        form { padding: 2rem; display: grid; gap: 1rem; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .full { grid-column: span 2; }
+        .field { display: grid; gap: 0.4rem; }
+        label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #4a5a68;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+        }
+        input, select {
+            padding: 0.7rem 0.85rem;
+            border: 1px solid #dde3e9;
+            border-radius: 0.5rem;
+            font-size: 0.95rem;
+            font-family: inherit;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        }
+        .radio-row { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+        .radio-row label { text-transform: none; font-weight: 500; display: flex; gap: 0.35rem; align-items: center; }
+        button {
+            border: none;
+            border-radius: 0.6rem;
+            background: #1a2634;
+            color: #fff;
+            font-weight: 600;
+            padding: 0.85rem 1rem;
+            cursor: pointer;
+        }
+        button:hover { background: #253549; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .message { display: none; margin: 0 2rem 2rem; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.88rem; }
+        .message.show { display: block; }
+        .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+        .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+        #guestFields { display: none; }
+        #guestFields.open { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Register vehicle</h1>
+            <p>Add a resident or guest plate to the allowed list.</p>
+            <p style="margin-top:0.5rem;"><a href="/">← Back to monitor</a> · <a href="/login">Login</a></p>
+        </div>
+        <form id="enrollForm">
+            <div class="field full">
+                <label>Vehicle type</label>
+                <div class="radio-row">
+                    <label><input type="radio" name="kind" value="resident" checked> Resident</label>
+                    <label><input type="radio" name="kind" value="guest"> Guest</label>
+                </div>
+            </div>
+            <div class="grid">
+                <div class="field full">
+                    <label for="plate_number">Plate number *</label>
+                    <input id="plate_number" name="plate_number" required placeholder="e.g. 12ب34567">
+                </div>
+                <div class="field">
+                    <label for="owner_name">Owner first name</label>
+                    <input id="owner_name" name="owner_name">
+                </div>
+                <div class="field">
+                    <label for="owner_lastname">Owner last name</label>
+                    <input id="owner_lastname" name="owner_lastname">
+                </div>
+                <div class="field">
+                    <label for="car_model">Car model</label>
+                    <input id="car_model" name="car_model" placeholder="Peugeot 206">
+                </div>
+                <div class="field">
+                    <label for="vehicle_class">Vehicle class</label>
+                    <select id="vehicle_class" name="vehicle_class">
+                        <option value="car">Car</option>
+                        <option value="motorcycle">Motorcycle</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="door_number">Door / unit</label>
+                    <input id="door_number" name="door_number">
+                </div>
+                <div class="field">
+                    <label for="floor_number">Floor</label>
+                    <input id="floor_number" name="floor_number">
+                </div>
+                <div class="field full" id="guestFields">
+                    <label for="guest_expires_at">Guest expires at *</label>
+                    <input id="guest_expires_at" name="guest_expires_at" type="datetime-local">
+                </div>
+            </div>
+            <button type="submit" id="submitBtn">Register</button>
+        </form>
+        <div id="errorMessage" class="message error"></div>
+        <div id="successMessage" class="message success"></div>
+    </div>
+    <script>
+        const enrollForm = document.getElementById("enrollForm");
+        const guestFields = document.getElementById("guestFields");
+        const errorMessage = document.getElementById("errorMessage");
+        const successMessage = document.getElementById("successMessage");
+        const submitBtn = document.getElementById("submitBtn");
+
+        function authHeaders() {
+            const h = { "Content-Type": "application/json", Accept: "application/json" };
+            const t = localStorage.getItem("access_token");
+            if (t) h.Authorization = "Bearer " + t;
+            return h;
+        }
+
+        function setMessage(target, message) {
+            errorMessage.classList.remove("show");
+            successMessage.classList.remove("show");
+            if (!message) return;
+            target.textContent = message;
+            target.classList.add("show");
+        }
+
+        function syncGuestFields() {
+            const isGuest = enrollForm.kind.value === "guest";
+            guestFields.classList.toggle("open", isGuest);
+            document.getElementById("guest_expires_at").required = isGuest;
+        }
+
+        enrollForm.kind.forEach((r) => r.addEventListener("change", syncGuestFields));
+        syncGuestFields();
+
+        enrollForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            setMessage(errorMessage, "");
+            submitBtn.disabled = true;
+            const isGuest = enrollForm.kind.value === "guest";
+            const payload = {
+                plate_number: document.getElementById("plate_number").value.trim(),
+                owner_name: document.getElementById("owner_name").value.trim() || null,
+                owner_lastname: document.getElementById("owner_lastname").value.trim() || null,
+                car_model: document.getElementById("car_model").value.trim() || null,
+                door_number: document.getElementById("door_number").value.trim() || null,
+                floor_number: document.getElementById("floor_number").value.trim() || null,
+                vehicle_class: document.getElementById("vehicle_class").value,
+                is_guest: isGuest,
+            };
+            if (isGuest) {
+                const raw = document.getElementById("guest_expires_at").value;
+                if (!raw) {
+                    setMessage(errorMessage, "Guest expiry date is required.");
+                    submitBtn.disabled = false;
+                    return;
+                }
+                payload.guest_expires_at = new Date(raw).toISOString();
+            }
+            try {
+                const res = await fetch("/api/enroll", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: authHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    setMessage(errorMessage, data.message || data.error || "Enrollment failed.");
+                    return;
+                }
+                const msg = data.duplicate
+                    ? "Plate already registered (vehicle_id " + data.vehicle_id + ")."
+                    : "Vehicle registered (id " + data.vehicle_id + ").";
+                setMessage(successMessage, msg);
+            } catch (_) {
+                setMessage(errorMessage, "Network error. Are you logged in?");
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

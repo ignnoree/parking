@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Parking monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1419;
+            color: #e8ecf0;
+            min-height: 100vh;
+        }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1.25rem;
+            background: #1a2634;
+            border-bottom: 1px solid #2a3a4d;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .topbar h1 { font-size: 1.1rem; font-weight: 600; }
+        .topbar nav { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+        .topbar a { color: #9eb4c8; text-decoration: none; font-size: 0.85rem; }
+        .topbar a:hover { color: #fff; }
+        .main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.75rem;
+        }
+        .toolbar-meta { font-size: 0.85rem; color: #9eb4c8; }
+        .btn {
+            border: 1px solid #3d5268;
+            background: #243447;
+            color: #e8ecf0;
+            padding: 0.45rem 0.85rem;
+            border-radius: 0.4rem;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .btn:hover { background: #2f4258; }
+        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-primary { background: #1e4d6b; border-color: #2a6a94; }
+        .btn-primary:hover { background: #256085; }
+        .logs-wrap {
+            border: 1px solid #2a3a4d;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            background: #151c24;
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th, td {
+            padding: 0.55rem 0.65rem;
+            text-align: left;
+            border-bottom: 1px solid #243040;
+            vertical-align: middle;
+        }
+        th { background: #1a2634; color: #9eb4c8; font-weight: 600; }
+        tr:last-child td { border-bottom: none; }
+        .mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+        .muted { color: #6b7a88; text-align: center; padding: 1.5rem; }
+        .pill {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+        .pill-entry { background: #1e3a4d; color: #7eb8ff; }
+        .pill-exit { background: #3a2e1e; color: #ffcc7d; }
+        .pill-registered { background: #1e4d2b; color: #7dffa8; }
+        .pill-guest { background: #4d3a1e; color: #ffcc7d; }
+        .pill-unregistered { background: #4d1e1e; color: #ff9e9e; }
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            border-top: 1px solid #2a3a4d;
+            background: #1a2634;
+        }
+        .live-panel {
+            display: none;
+            margin-top: 1rem;
+            border: 1px solid #2a3a4d;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            background: #151c24;
+        }
+        .live-panel.open { display: block; }
+        .live-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.6rem 0.85rem;
+            background: #1a2634;
+            border-bottom: 1px solid #2a3a4d;
+            font-size: 0.85rem;
+        }
+        .badge {
+            display: inline-block;
+            font-size: 0.72rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+        }
+        .badge-live { background: #1e4d2b; color: #7dffa8; }
+        .badge-wait { background: #4d3a1e; color: #ffcc7d; }
+        .badge-off { background: #4d1e1e; color: #ff9e9e; }
+        .viewer {
+            position: relative;
+            background: #000;
+            aspect-ratio: 4 / 3;
+            max-height: 60vh;
+        }
+        .viewer img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+            background: #111;
+        }
+        .viewer-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6b7a88;
+            font-size: 0.9rem;
+            text-align: center;
+            padding: 1rem;
+        }
+        .legend {
+            padding: 0.65rem 0.85rem;
+            display: flex;
+            gap: 1rem;
+            font-size: 0.78rem;
+            color: #9eb4c8;
+            border-top: 1px solid #2a3a4d;
+        }
+        .legend span::before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            margin-right: 0.3rem;
+            vertical-align: -1px;
+        }
+        .legend-resident::before { background: #22c55e; }
+        .legend-guest::before { background: #eab308; }
+        .legend-unknown::before { background: #ef4444; }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <h1>Parking monitor</h1>
+        <nav>
+            <a href="/submit">Register vehicle</a>
+            <a href="/login">Login</a>
+        </nav>
+    </header>
+
+    <main class="main">
+        <div class="toolbar">
+            <div class="toolbar-meta" id="logsMeta">Loading logs…</div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                <button type="button" class="btn" id="refreshBtn">Refresh</button>
+                <button type="button" class="btn btn-primary" id="toggleLiveBtn">Show live camera</button>
+            </div>
+        </div>
+
+        <section class="logs-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Plate</th>
+                        <th>Direction</th>
+                        <th>Status</th>
+                        <th>Guest</th>
+                        <th>Photo</th>
+                    </tr>
+                </thead>
+                <tbody id="logsBody">
+                    <tr><td class="muted" colspan="6">Loading…</td></tr>
+                </tbody>
+            </table>
+            <div class="pagination">
+                <button type="button" class="btn" id="prevBtn" disabled>Previous</button>
+                <span class="toolbar-meta" id="pageInfo">Page 1</span>
+                <button type="button" class="btn" id="nextBtn" disabled>Next</button>
+            </div>
+        </section>
+
+        <section class="live-panel" id="livePanel" aria-hidden="true">
+            <div class="live-panel-head">
+                <span>Live camera <span id="camBadge" class="badge badge-wait">Off</span></span>
+                <button type="button" class="btn" id="hideLiveBtn">Hide</button>
+            </div>
+            <div class="viewer">
+                <img id="liveStream" alt="Server camera live view" style="display:none;">
+                <div class="viewer-placeholder" id="placeholder">Open live view to connect…</div>
+            </div>
+            <div class="legend">
+                <span class="legend-resident">Registered</span>
+                <span class="legend-guest">Guest</span>
+                <span class="legend-unknown">Unregistered</span>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const PAGE_SIZE = 10;
+        let currentPage = 1;
+        let liveOpen = false;
+        let statusTimer = null;
+
+        const logsBody = document.getElementById("logsBody");
+        const logsMeta = document.getElementById("logsMeta");
+        const pageInfo = document.getElementById("pageInfo");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+        const refreshBtn = document.getElementById("refreshBtn");
+        const toggleLiveBtn = document.getElementById("toggleLiveBtn");
+        const hideLiveBtn = document.getElementById("hideLiveBtn");
+        const livePanel = document.getElementById("livePanel");
+        const streamImg = document.getElementById("liveStream");
+        const placeholder = document.getElementById("placeholder");
+        const camBadge = document.getElementById("camBadge");
+
+        function authHeaders() {
+            const h = { Accept: "application/json" };
+            const t = localStorage.getItem("access_token");
+            if (t) h.Authorization = "Bearer " + t;
+            return h;
+        }
+
+        function escapeHtml(input) {
+            return String(input ?? "")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;");
+        }
+
+        function directionPill(dir) {
+            if (dir === "exit") return "<span class='pill pill-exit'>Exit</span>";
+            return "<span class='pill pill-entry'>Entry</span>";
+        }
+
+        function statusPill(row) {
+            if (row.match_status === "registered" && row.is_guest) {
+                return "<span class='pill pill-guest'>Guest</span>";
+            }
+            if (row.match_status === "registered") {
+                return "<span class='pill pill-registered'>Registered</span>";
+            }
+            return "<span class='pill pill-unregistered'>Unregistered</span>";
+        }
+
+        function formatTime(iso) {
+            if (!iso) return "—";
+            try { return new Date(iso).toLocaleString(); } catch (_) { return iso; }
+        }
+
+        function snapshotCell(row) {
+            if (!row.snapshot_url) return "—";
+            return (
+                "<a href='" + escapeHtml(row.snapshot_url) + "' target='_blank' rel='noopener'>" +
+                "<img src='" + escapeHtml(row.snapshot_url) + "' alt='' style='width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #3d5268;' loading='lazy'>" +
+                "</a>"
+            );
+        }
+
+        async function loadLogs(page) {
+            currentPage = page;
+            logsMeta.textContent = "Loading…";
+            logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Loading…</td></tr>";
+
+            try {
+                const res = await fetch(
+                    "/api/parking-logs?page=" + page + "&page_size=" + PAGE_SIZE,
+                    { credentials: "include", headers: authHeaders() }
+                );
+                if (res.status === 401) {
+                    logsMeta.textContent = "Log in required.";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Please <a href='/login' style='color:#7eb8ff'>log in</a>.</td></tr>";
+                    prevBtn.disabled = true;
+                    nextBtn.disabled = true;
+                    return;
+                }
+                const data = await res.json();
+                const rows = Array.isArray(data.logs) ? data.logs : [];
+                const total = data.total ?? rows.length;
+                const pageNum = data.page ?? page;
+
+                logsMeta.textContent = total + " total events";
+                pageInfo.textContent = "Page " + pageNum + " · " + rows.length + " shown";
+                prevBtn.disabled = !data.has_prev;
+                nextBtn.disabled = !data.has_next;
+
+                if (!rows.length) {
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>No parking logs yet.</td></tr>";
+                    return;
+                }
+
+                logsBody.innerHTML = rows.map((r) => (
+                    "<tr>" +
+                    "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
+                    "<td class='mono'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
+                    "<td>" + directionPill(r.direction) + "</td>" +
+                    "<td>" + statusPill(r) + "</td>" +
+                    "<td>" + (r.is_guest ? "Yes" : "—") + "</td>" +
+                    "<td>" + snapshotCell(r) + "</td>" +
+                    "</tr>"
+                )).join("");
+            } catch (_) {
+                logsMeta.textContent = "Failed to load logs.";
+                logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Network error.</td></tr>";
+            }
+        }
+
+        function setBadge(text, cls) {
+            camBadge.textContent = text;
+            camBadge.className = "badge " + cls;
+        }
+
+        async function pollStatus() {
+            if (!liveOpen) return;
+            try {
+                const res = await fetch("/api/live/status", {
+                    credentials: "include",
+                    headers: authHeaders(),
+                });
+                if (!res.ok) { setBadge("Login required", "badge-off"); return; }
+                const data = await res.json();
+                if (data.has_frame) setBadge("Live", "badge-live");
+                else if (data.connected) setBadge("Camera OK", "badge-wait");
+                else setBadge("No camera", "badge-off");
+            } catch (_) {
+                setBadge("Offline", "badge-off");
+            }
+        }
+
+        function startLiveStream() {
+            liveOpen = true;
+            livePanel.classList.add("open");
+            livePanel.setAttribute("aria-hidden", "false");
+            toggleLiveBtn.textContent = "Hide live camera";
+            placeholder.style.display = "flex";
+            placeholder.textContent = "Connecting to camera…";
+            streamImg.style.display = "none";
+            streamImg.src = "/api/live/stream";
+            pollStatus();
+            if (statusTimer) clearInterval(statusTimer);
+            statusTimer = setInterval(pollStatus, 5000);
+        }
+
+        function stopLiveStream() {
+            liveOpen = false;
+            livePanel.classList.remove("open");
+            livePanel.setAttribute("aria-hidden", "true");
+            toggleLiveBtn.textContent = "Show live camera";
+            streamImg.src = "";
+            streamImg.style.display = "none";
+            placeholder.style.display = "flex";
+            placeholder.textContent = "Live camera hidden.";
+            setBadge("Off", "badge-off");
+            if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+        }
+
+        streamImg.onload = function () {
+            placeholder.style.display = "none";
+            streamImg.style.display = "block";
+            setBadge("Live", "badge-live");
+        };
+
+        streamImg.onerror = function () {
+            streamImg.style.display = "none";
+            placeholder.style.display = "flex";
+            placeholder.innerHTML = "Cannot load stream.<br><small>Log in at <a href='/login' style='color:#7eb8ff'>/login</a>.</small>";
+            setBadge("Stream error", "badge-off");
+        };
+
+        prevBtn.addEventListener("click", () => loadLogs(currentPage - 1));
+        nextBtn.addEventListener("click", () => loadLogs(currentPage + 1));
+        refreshBtn.addEventListener("click", () => loadLogs(currentPage));
+        toggleLiveBtn.addEventListener("click", () => {
+            if (liveOpen) stopLiveStream();
+            else startLiveStream();
+        });
+        hideLiveBtn.addEventListener("click", stopLiveStream);
+
+        loadLogs(1);
+    </script>
+</body>
+</html>

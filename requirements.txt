@@ -1,0 +1,13 @@
+Flask
+Flask-JWT-Extended
+psycopg2-binary
+SQLAlchemy>=2.0
+python-dotenv
+Werkzeug
+opencv-python-headless
+numpy
+supervisor
+fast-alpr[onnx]>=0.4.0
+paddlepaddle>=3.3.0
+paddleocr>=3.6.0
+easyocr>=1.7.0

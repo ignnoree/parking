@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin Login | Parking ANPR</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .container {
+            width: 100%;
+            max-width: 420px;
+            background: #fff;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+        }
+        .header { padding: 1.5rem; border-bottom: 1px solid #eef2f6; }
+        .header h1 { font-size: 1.3rem; color: #1a2634; margin-bottom: 0.3rem; }
+        .header p { color: #6b7a88; font-size: 0.9rem; }
+        form { padding: 1.5rem; display: grid; gap: 1rem; }
+        .field { display: grid; gap: 0.4rem; }
+        label {
+            font-size: 0.83rem;
+            color: #4a5a68;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+        }
+        input {
+            width: 100%;
+            padding: 0.75rem 0.9rem;
+            border-radius: 0.55rem;
+            border: 1px solid #d8e1ea;
+            font-size: 0.95rem;
+            outline: none;
+        }
+        input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+        }
+        button {
+            border: none;
+            border-radius: 0.65rem;
+            background: #1a2634;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 0.85rem 1rem;
+            cursor: pointer;
+        }
+        button:hover { background: #253549; }
+        button:disabled { cursor: not-allowed; opacity: 0.65; }
+        .message {
+            display: none;
+            margin: 0 1.5rem 1.5rem;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.88rem;
+        }
+        .message.show { display: block; }
+        .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+        .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Parking admin login</h1>
+            <p>Sign in to view logs and register vehicles.</p>
+        </div>
+        <form id="loginForm">
+            <div class="field">
+                <label for="username">Username</label>
+                <input id="username" name="username" type="text" autocomplete="username" required>
+            </div>
+            <div class="field">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="current-password" required>
+            </div>
+            <button id="submitBtn" type="submit">Login</button>
+        </form>
+        <div id="errorMessage" class="message error"></div>
+        <div id="successMessage" class="message success"></div>
+    </div>
+    <script>
+        const loginForm = document.getElementById("loginForm");
+        const submitBtn = document.getElementById("submitBtn");
+        const errorMessage = document.getElementById("errorMessage");
+        const successMessage = document.getElementById("successMessage");
+
+        function setMessage(target, message) {
+            errorMessage.classList.remove("show");
+            successMessage.classList.remove("show");
+            if (!message) return;
+            target.textContent = message;
+            target.classList.add("show");
+        }
+
+        loginForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            setMessage(errorMessage, "");
+            submitBtn.disabled = true;
+            try {
+                const response = await fetch("/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        username: document.getElementById("username").value.trim(),
+                        password: document.getElementById("password").value,
+                    }),
+                });
+                const payload = await response.json();
+                if (!response.ok) {
+                    setMessage(errorMessage, payload.error || "Login failed.");
+                    return;
+                }
+                localStorage.setItem("access_token", payload.access_token || "");
+                localStorage.setItem("refresh_token", payload.refresh_token || "");
+                localStorage.setItem("token_type", payload.token_type || "Bearer");
+                setMessage(successMessage, "Login successful. Redirecting...");
+                setTimeout(() => { window.location.href = "/"; }, 450);
+            } catch (_) {
+                setMessage(errorMessage, "Request failed. Please try again.");
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
