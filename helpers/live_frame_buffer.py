@@ -89,11 +89,19 @@ def publish_frame(frame: np.ndarray) -> None:
         _frame_ready.notify_all()
 
 
-def set_camera_disconnected() -> None:
-    global _camera_connected, _overlay_boxes
+def clear_stream_buffer() -> None:
+    """Drop the last JPEG so MJPEG clients do not keep showing a previous camera."""
+    global _latest_jpeg, _camera_connected, _frame_sequence, _overlay_boxes
     with _frame_ready:
+        _latest_jpeg = None
         _camera_connected = False
         _overlay_boxes = []
+        _frame_sequence += 1
+        _frame_ready.notify_all()
+
+
+def set_camera_disconnected() -> None:
+    clear_stream_buffer()
 
 
 def wait_for_new_jpeg(after_sequence: int, timeout: float) -> tuple[bytes | None, int]:
@@ -102,9 +110,9 @@ def wait_for_new_jpeg(after_sequence: int, timeout: float) -> tuple[bytes | None
         while _frame_sequence <= after_sequence:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return _latest_jpeg, _frame_sequence
+                return (_latest_jpeg if _camera_connected else None), _frame_sequence
             _frame_ready.wait(timeout=remaining)
-        return _latest_jpeg, _frame_sequence
+        return (_latest_jpeg if _camera_connected else None), _frame_sequence
 
 
 def get_frame_sequence() -> int:

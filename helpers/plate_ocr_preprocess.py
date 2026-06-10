@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
+
+_light_profile_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("light_profile", default="normal")
+
+
+@contextmanager
+def light_profile_scope(profile: str):
+    token = _light_profile_ctx.set((profile or "normal").strip().lower())
+    try:
+        yield
+    finally:
+        _light_profile_ctx.reset(token)
+
+
+def _active_light_profile() -> str:
+    return _light_profile_ctx.get()
 
 
 def _flag(name: str, *, default: str = "true") -> bool:
@@ -96,6 +113,11 @@ def _mean_brightness(gray: np.ndarray) -> float:
 def is_night_crop(crop_bgr: np.ndarray) -> bool:
     if crop_bgr is None or crop_bgr.size == 0:
         return False
+    profile = _active_light_profile()
+    if profile == "low_light":
+        return True
+    if profile == "high_glare":
+        return False
     if not _flag("PLATE_PREPROCESS_NIGHT_AUTO"):
         return False
     gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
@@ -130,7 +152,13 @@ def enhance_contrast(crop_bgr: np.ndarray, *, night: bool = False) -> np.ndarray
         crop_bgr = enhance_night(crop_bgr)
 
     gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
-    clip = 3.5 if night else 2.5
+    profile = _active_light_profile()
+    if profile == "high_glare":
+        clip = 4.5 if night else 3.5
+    elif profile == "low_light":
+        clip = 4.0 if night else 3.0
+    else:
+        clip = 3.5 if night else 2.5
     clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
 

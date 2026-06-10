@@ -57,14 +57,22 @@ def init_db() -> None:
 
 def reset_db() -> None:
     from database.admin_db import init_default_admin
+    from database.cameras_db import bootstrap_cameras_from_env
+    from database.settings_db import bootstrap_settings_from_env
 
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     init_default_admin()
+    bootstrap_cameras_from_env()
+    bootstrap_settings_from_env()
 
 
 def bootstrap_db() -> None:
     init_db()
     from database.admin_db import init_default_admin
+    from database.cameras_db import bootstrap_cameras_from_env
+    from database.settings_db import bootstrap_settings_from_env
 
     init_default_admin()
+    bootstrap_cameras_from_env()
+    bootstrap_settings_from_env()

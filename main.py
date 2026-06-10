@@ -1,3 +1,4 @@
+import atexit
 import datetime
 import logging
 import os
@@ -24,6 +25,7 @@ from routes.auth_routes import auth_bp
 from routes.app_routes import app_bp
 from helpers.utils import UPLOAD_FOLDER
 from helpers.guest_expiry import purge_expired_guest_vehicles, start_guest_expiry_thread
+from helpers.plate_detect_isolated import shutdown as shutdown_plate_worker
 from workers.camera_worker import start_camera_worker_thread
 
 
@@ -81,9 +83,18 @@ app.register_blueprint(app_bp)
 
 bootstrap_db()
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-purge_expired_guest_vehicles()
-start_guest_expiry_thread()
-start_camera_worker_thread()
+atexit.register(shutdown_plate_worker)
+
+
+def start_background_workers() -> None:
+    purge_expired_guest_vehicles()
+    start_guest_expiry_thread()
+    start_camera_worker_thread()
+
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+    start_background_workers()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=_env_bool("FLASK_DEBUG"))

@@ -165,6 +165,7 @@
         <h1>Parking monitor</h1>
         <nav>
             <a href="/submit">Register vehicle</a>
+            <a href="/admin">Admin</a>
             <a href="/login">Login</a>
         </nav>
     </header>
@@ -343,15 +344,28 @@
                 });
                 if (!res.ok) { setBadge("Login required", "badge-off"); return; }
                 const data = await res.json();
+                const worker = data.camera_worker || {};
+                if (!worker.running || worker.camera_count === 0) {
+                    showNoCamera("No camera configured. Add one in Admin.");
+                    return;
+                }
                 if (data.has_frame) setBadge("Live", "badge-live");
                 else if (data.connected) setBadge("Camera OK", "badge-wait");
-                else setBadge("No camera", "badge-off");
+                else setBadge("Waiting", "badge-wait");
             } catch (_) {
                 setBadge("Offline", "badge-off");
             }
         }
 
-        function startLiveStream() {
+        function showNoCamera(message) {
+            streamImg.src = "";
+            streamImg.style.display = "none";
+            placeholder.style.display = "flex";
+            placeholder.textContent = message || "No camera configured. Add one in Admin.";
+            setBadge("No camera", "badge-off");
+        }
+
+        async function startLiveStream() {
             liveOpen = true;
             livePanel.classList.add("open");
             livePanel.setAttribute("aria-hidden", "false");
@@ -359,7 +373,29 @@
             placeholder.style.display = "flex";
             placeholder.textContent = "Connecting to camera…";
             streamImg.style.display = "none";
-            streamImg.src = "/api/live/stream";
+            streamImg.src = "";
+
+            try {
+                const res = await fetch("/api/live/status", {
+                    credentials: "include",
+                    headers: authHeaders(),
+                });
+                if (!res.ok) {
+                    showNoCamera("Log in to view the live camera.");
+                    return;
+                }
+                const data = await res.json();
+                const worker = data.camera_worker || {};
+                if (!worker.running || worker.camera_count === 0) {
+                    showNoCamera("No camera configured. Add one in Admin.");
+                    return;
+                }
+            } catch (_) {
+                showNoCamera("Cannot reach the server.");
+                return;
+            }
+
+            streamImg.src = "/api/live/stream?t=" + Date.now();
             pollStatus();
             if (statusTimer) clearInterval(statusTimer);
             statusTimer = setInterval(pollStatus, 5000);
@@ -385,10 +421,8 @@
         };
 
         streamImg.onerror = function () {
-            streamImg.style.display = "none";
-            placeholder.style.display = "flex";
-            placeholder.innerHTML = "Cannot load stream.<br><small>Log in at <a href='/login' style='color:#7eb8ff'>/login</a>.</small>";
-            setBadge("Stream error", "badge-off");
+            if (!liveOpen) return;
+            showNoCamera("No camera stream available. Check Admin camera settings.");
         };
 
         prevBtn.addEventListener("click", () => loadLogs(currentPage - 1));

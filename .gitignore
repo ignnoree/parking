@@ -13,5 +13,9 @@ logs/
 uploads/
 collection/
 
+# Downloaded / experimental model weights
+*.pt
+models/
+
 .pytest_cache/
 .mypy_cache/

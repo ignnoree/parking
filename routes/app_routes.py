@@ -9,11 +9,25 @@ from flask_jwt_extended import jwt_required
 from database.db import reset_db
 from database.logs_db import count_parking_logs, list_parking_logs, log_software_event
 from database.vehicles_db import list_vehicles, soft_delete_vehicle, find_vehicle_by_normalized, insert_vehicle
+from database.cameras_db import (
+    VALID_GATE_ROLES,
+    VALID_LIGHT_PROFILES,
+    VALID_PROTOCOLS,
+    delete_camera,
+    get_camera_by_id,
+    insert_camera,
+    list_cameras,
+    parse_camera_source,
+    source_in_use,
+    update_camera,
+)
+from database.settings_db import BOOTSTRAP_KEYS, get_setting, list_settings, set_setting
 from database.admin_db import ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN, ROLE_WORKER
 from helpers.rbac import require_admin_roles
 from helpers.plate_normalize import normalize_plate
 from helpers.live_frame_buffer import get_frame_sequence, get_stream_status, wait_for_new_jpeg
 from helpers.utils import UPLOAD_FOLDER, COLLECTION_FOLDER
+from workers.camera_worker import get_worker_status, reload_cameras
 
 app_bp = Blueprint("app_routes", __name__)
 
@@ -44,9 +58,14 @@ def health():
         db_ok = True
     except Exception:
         db_ok = False
-    return jsonify({"status": "ok" if db_ok else "degraded", "database": db_ok, "camera": get_stream_status()}), (
-        200 if db_ok else 503
-    )
+    return jsonify(
+        {
+            "status": "ok" if db_ok else "degraded",
+            "database": db_ok,
+            "camera": get_stream_status(),
+            "camera_worker": get_worker_status(),
+        }
+    ), (200 if db_ok else 503)
 
 
 @app_bp.get("/")
@@ -67,15 +86,145 @@ def submit_page():
         return f.read()
 
 
+@app_bp.get("/admin")
+def admin_page():
+    with open("templates/admin.html", encoding="utf-8") as f:
+        return f.read()
+
+
 @app_bp.get("/api/live/status")
 @jwt_required()
 def live_status():
-    return jsonify({"status": "ok", **get_stream_status()})
+    return jsonify({"status": "ok", **get_stream_status(), "camera_worker": get_worker_status()})
+
+
+@app_bp.get("/api/cameras")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def cameras_list_api():
+    return jsonify({"cameras": list_cameras()})
+
+
+@app_bp.post("/api/cameras")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def cameras_create_api():
+    data = request.get_json() or {}
+    protocol = str(data.get("protocol") or "rtsp").strip().lower()
+    source = str(data.get("source") or "").strip()
+    if parse_camera_source(protocol, source) is None:
+        return jsonify({"status": "error", "message": "Invalid camera data"}), 400
+    if source_in_use(protocol, source):
+        return jsonify({"status": "error", "message": "A camera with this source already exists"}), 409
+    camera_id = insert_camera(
+        name=str(data.get("name") or "").strip(),
+        protocol=protocol,
+        source=source,
+        gate_role=str(data.get("gate_role") or "entry").strip().lower(),
+        is_enabled=bool(data.get("is_enabled", True)),
+        frame_interval_seconds=data.get("frame_interval_seconds"),
+        light_profile=str(data.get("light_profile") or "normal").strip().lower(),
+    )
+    if camera_id is None:
+        return jsonify({"status": "error", "message": "Invalid camera data"}), 400
+    reload_cameras()
+    row = get_camera_by_id(camera_id)
+    log_software_event(
+        level="INFO",
+        event="camera.created",
+        module="app_routes",
+        message=f"Camera created id={camera_id}",
+        metadata=f"name={row.get('name') if row else camera_id}",
+    )
+    return jsonify({"status": "ok", "camera": row}), 201
+
+
+@app_bp.patch("/api/cameras/<int:camera_id>")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def cameras_update_api(camera_id: int):
+    data = request.get_json() or {}
+    if not data:
+        return jsonify({"status": "error", "message": "No fields to update"}), 400
+    existing = get_camera_by_id(camera_id)
+    if not existing:
+        return jsonify({"status": "error", "message": "Camera not found"}), 404
+    protocol = str(data.get("protocol", existing["protocol"])).strip().lower()
+    source = str(data.get("source", existing["source"])).strip()
+    if "protocol" in data or "source" in data:
+        if parse_camera_source(protocol, source) is None:
+            return jsonify({"status": "error", "message": "Invalid camera data"}), 400
+        if source_in_use(protocol, source, exclude_id=camera_id):
+            return jsonify({"status": "error", "message": "A camera with this source already exists"}), 409
+    ok = update_camera(camera_id, **data)
+    if not ok:
+        return jsonify({"status": "error", "message": "Camera not found or invalid data"}), 404
+    reload_cameras()
+    log_software_event(
+        level="INFO",
+        event="camera.updated",
+        module="app_routes",
+        message=f"Camera updated id={camera_id}",
+    )
+    return jsonify({"status": "ok", "camera": get_camera_by_id(camera_id)})
+
+
+@app_bp.delete("/api/cameras/<int:camera_id>")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def cameras_delete_api(camera_id: int):
+    if not delete_camera(camera_id):
+        return jsonify({"status": "error", "message": "Camera not found"}), 404
+    reload_cameras()
+    log_software_event(
+        level="INFO",
+        event="camera.deleted",
+        module="app_routes",
+        message=f"Camera deleted id={camera_id}",
+    )
+    return jsonify({"status": "ok"})
+
+
+@app_bp.get("/api/settings")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def settings_list_api():
+    return jsonify(
+        {
+            "settings": list_settings(),
+            "allowed_keys": list(BOOTSTRAP_KEYS),
+            "options": {
+                "protocols": list(VALID_PROTOCOLS),
+                "gate_roles": list(VALID_GATE_ROLES),
+                "light_profiles": list(VALID_LIGHT_PROFILES),
+            },
+        }
+    )
+
+
+@app_bp.patch("/api/settings/<key>")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def settings_update_api(key: str):
+    if key not in BOOTSTRAP_KEYS:
+        return jsonify({"status": "error", "message": "Setting key not allowed"}), 400
+    data = request.get_json() or {}
+    if "value" not in data:
+        return jsonify({"status": "error", "message": "value required"}), 400
+    payload = data["value"]
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
+    set_setting(key, payload)
+    return jsonify({"status": "ok", "setting": {"key": key, "value": get_setting(key)}})
 
 
 @app_bp.get("/api/live/stream")
 @jwt_required()
 def live_stream():
+    worker = get_worker_status()
+    if worker.get("camera_count", 0) == 0:
+        return jsonify({"status": "error", "message": "No camera configured"}), 503
+
     fps = min(60.0, max(1.0, float(os.environ.get("LIVE_STREAM_MAX_FPS", "15"))))
     pause = 1.0 / fps
     boundary = "frame"
@@ -87,7 +236,14 @@ def live_stream():
             if jpeg:
                 yield b"--" + boundary.encode() + b"\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
 
-    return Response(generate(), mimetype=f"multipart/x-mixed-replace; boundary={boundary}")
+    return Response(
+        generate(),
+        mimetype=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app_bp.get("/api/parking-logs")
@@ -227,4 +383,5 @@ def reset_system():
                 elif os.path.isdir(p):
                     shutil.rmtree(p, ignore_errors=True)
     log_software_event(level="WARN", event="system.reset", module="app_routes", message="System reset")
+    reload_cameras()
     return jsonify({"status": "ok"})
