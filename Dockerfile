@@ -21,7 +21,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/logs /app/uploads/unknown_parking_logs /app/collection
+RUN mkdir -p /app/logs /app/collection \
+    /app/uploads/temp \
+    /app/uploads/known_parking_logs/sources /app/uploads/known_parking_logs/crops \
+    /app/uploads/unknown_parking_logs/sources /app/uploads/unknown_parking_logs/crops
 
 ENV PARKING_APP_DIR=/app
 ENV PARKING_APP_PYTHON=python

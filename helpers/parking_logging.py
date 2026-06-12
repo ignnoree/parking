@@ -14,22 +14,27 @@ import uuid
 import cv2
 
 from database.logs_db import log_parking_event
+from helpers.plate_cluster import canonical_plate, plates_similar
 from helpers.plate_crop import crop_frame_region, draw_plate_box_on_crop, expand_plate_box
-from helpers.utils import PARKING_CROP_FOLDER, PARKING_SOURCE_FOLDER
+from helpers.utils import parking_snapshot_dirs
 
-PARKING_LOG_COOLDOWN_SECONDS = int(os.environ.get("PARKING_LOG_COOLDOWN_SECONDS", "600"))
+from helpers.runtime_settings import parking_log_cooldown_seconds
+
 # Suppress only OCR jitter on the *same* car (similar reads). Different plates are never blocked.
-PARKING_JITTER_COOLDOWN_SECONDS = int(os.environ.get("PARKING_JITTER_COOLDOWN_SECONDS", "20"))
+PARKING_JITTER_COOLDOWN_SECONDS = int(os.environ.get("PARKING_JITTER_COOLDOWN_SECONDS", "120"))
 PARKING_READ_STABILITY_COUNT = max(1, int(os.environ.get("PARKING_READ_STABILITY_COUNT", "2")))
 PARKING_READ_STABILITY_WINDOW_SECONDS = max(
-    1.0, float(os.environ.get("PARKING_READ_STABILITY_WINDOW_SECONDS", "8"))
+    1.0, float(os.environ.get("PARKING_READ_STABILITY_WINDOW_SECONDS", "20"))
+)
+PARKING_COOLDOWN_MAP_TTL_SECONDS = max(
+    0, int(os.environ.get("PARKING_COOLDOWN_MAP_TTL_SECONDS", "86400"))
 )
 
 _lock = threading.Lock()
 _last_parking_log_at: dict[str, datetime.datetime] = {}
-_read_history: collections.deque[tuple[str, datetime.datetime]] = collections.deque(maxlen=80)
+_read_history: collections.deque[tuple[str, datetime.datetime]] = collections.deque(maxlen=120)
 _recent_unregistered_logs: collections.deque[tuple[str, str, datetime.datetime]] = collections.deque(
-    maxlen=50
+    maxlen=80
 )
 
 
@@ -37,35 +42,18 @@ def _relpath(path: str) -> str:
     return os.path.relpath(path, start=os.getcwd()).replace("\\", "/")
 
 
-def _edit_distance(a: str, b: str) -> int:
-    if len(a) < len(b):
-        a, b = b, a
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, start=1):
-        curr = [i]
-        for j, cb in enumerate(b, start=1):
-            cost = 0 if ca == cb else 1
-            curr.append(min(curr[-1] + 1, prev[j] + 1, prev[j - 1] + cost))
-        prev = curr
-    return prev[-1]
+def _prune_stale_cooldown_keys(now_utc: datetime.datetime) -> None:
+    if PARKING_COOLDOWN_MAP_TTL_SECONDS <= 0:
+        return
+    ttl = datetime.timedelta(seconds=PARKING_COOLDOWN_MAP_TTL_SECONDS)
+    stale = [key for key, seen_at in _last_parking_log_at.items() if now_utc - seen_at > ttl]
+    for key in stale:
+        _last_parking_log_at.pop(key, None)
 
 
-def _plate_digits(text: str) -> str:
-    return "".join(ch for ch in text if ch.isdigit())
-
-
+# Backward-compatible test hooks.
 def _plates_similar(a: str, b: str) -> bool:
-    """True when two reads are likely the same physical plate with OCR noise."""
-    if a == b:
-        return True
-    if abs(len(a) - len(b)) > 2:
-        return False
-    da, db = _plate_digits(a), _plate_digits(b)
-    if len(da) >= 5 and len(db) >= 5 and da[-5:] == db[-5:]:
-        return True
-    if len(a) >= 6 and len(b) >= 6 and a[:4] == b[:4]:
-        return _edit_distance(a, b) <= 3
-    return _edit_distance(a, b) <= 2
+    return plates_similar(a, b)
 
 
 def _stable_unregistered_read(norm: str, now_utc: datetime.datetime) -> bool:
@@ -77,14 +65,15 @@ def _stable_unregistered_read(norm: str, now_utc: datetime.datetime) -> bool:
     for prev_norm, seen_at in reversed(_read_history):
         if now_utc - seen_at > window:
             break
-        if _plates_similar(prev_norm, norm):
+        if plates_similar(prev_norm, norm):
             matches += 1
-            if matches >= PARKING_READ_STABILITY_COUNT:
+            # Count includes current read: COUNT=2 → log on 2nd agreeing OCR.
+            if matches + 1 >= PARKING_READ_STABILITY_COUNT:
                 return True
     return False
 
 
-def _jitter_cooldown_active(norm: str, direction: str, now_utc: datetime.datetime) -> bool:
+def _jitter_cooldown_active(canonical: str, direction: str, now_utc: datetime.datetime) -> bool:
     """Block only if we already logged a *similar* plate recently — not different cars."""
     if PARKING_JITTER_COOLDOWN_SECONDS <= 0:
         return False
@@ -94,14 +83,14 @@ def _jitter_cooldown_active(norm: str, direction: str, now_utc: datetime.datetim
             continue
         if now_utc - logged_at > window:
             break
-        if _plates_similar(prev_norm, norm):
+        if plates_similar(prev_norm, canonical):
             return True
     return False
 
 
-def _persist_source_frame(frame_path: str, scan_id: str) -> str | None:
+def _persist_source_frame(frame_path: str, scan_id: str, *, source_folder: str) -> str | None:
     name = f"scan_{scan_id}_source.jpg"
-    dest = os.path.join(PARKING_SOURCE_FOLDER, name)
+    dest = os.path.join(source_folder, name)
     try:
         shutil.copy2(frame_path, dest)
         return _relpath(dest)
@@ -116,6 +105,8 @@ def _persist_plate_crop(
     plate_normalized: str,
     direction: str,
     scan_id: str,
+    *,
+    crop_folder: str,
 ) -> str | None:
     frame = cv2.imread(frame_path)
     if frame is None:
@@ -131,26 +122,27 @@ def _persist_plate_crop(
     annotated = draw_plate_box_on_crop(crop, plate_box, expanded)
     safe_plate = "".join(ch if ch.isalnum() else "_" for ch in plate_normalized)[:24] or "plate"
     name = f"crop_{safe_plate}_{direction}_{scan_id}.jpg"
-    dest = os.path.join(PARKING_CROP_FOLDER, name)
+    dest = os.path.join(crop_folder, name)
     if not cv2.imwrite(dest, annotated):
         logging.warning("Failed to write plate crop %s", dest)
         return None
     return _relpath(dest)
 
 
-def log_parking_events_for_results(frame_path: str, result_payload: dict) -> None:
+def log_parking_events_for_results(frame_path: str, result_payload: dict) -> list[dict]:
     if not result_payload or result_payload.get("status") != "ok":
-        return
+        return []
 
     direction = str(result_payload.get("direction") or "entry")
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     results = [item for item in (result_payload.get("results") or []) if isinstance(item, dict)]
     if not results:
-        return
+        return []
 
     scan_id = uuid.uuid4().hex[:12]
-    source_frame: str | None = None
+    source_frames: dict[bool, str | None] = {}
     logged_any = False
+    logged_plates: list[dict] = []
 
     for item in results:
         norm = item.get("plate_normalized")
@@ -159,29 +151,38 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> Non
         match_status = item.get("match_status") or "unregistered"
         vehicle_id = item.get("vehicle_id")
 
+        if match_status != "registered" and not _stable_unregistered_read(norm, now_utc):
+            _read_history.append((norm, now_utc))
+            continue
+
+        canonical = canonical_plate(norm, now_utc)
+
         if match_status == "registered" and vehicle_id is not None:
             key = f"registered:{int(vehicle_id)}:{direction}"
         else:
-            key = f"unregistered:{norm}:{direction}"
+            key = f"unregistered:{canonical}:{direction}"
 
         with _lock:
+            _prune_stale_cooldown_keys(now_utc)
             if match_status != "registered":
-                if _jitter_cooldown_active(norm, direction, now_utc):
-                    continue
-                if not _stable_unregistered_read(norm, now_utc):
-                    _read_history.append((norm, now_utc))
+                if _jitter_cooldown_active(canonical, direction, now_utc):
                     continue
             last = _last_parking_log_at.get(key)
-            if last and (now_utc - last).total_seconds() < PARKING_LOG_COOLDOWN_SECONDS:
-                _read_history.append((norm, now_utc))
+            if last and (now_utc - last).total_seconds() < parking_log_cooldown_seconds():
+                _read_history.append((canonical, now_utc))
                 continue
             _last_parking_log_at[key] = now_utc
             if match_status != "registered":
-                _recent_unregistered_logs.append((norm, direction, now_utc))
-            _read_history.append((norm, now_utc))
+                _recent_unregistered_logs.append((canonical, direction, now_utc))
+            _read_history.append((canonical, now_utc))
 
-        if source_frame is None:
-            source_frame = _persist_source_frame(frame_path, scan_id)
+        is_registered = match_status == "registered" and vehicle_id is not None
+        source_folder, crop_folder = parking_snapshot_dirs(registered=is_registered)
+        if is_registered not in source_frames:
+            source_frames[is_registered] = _persist_source_frame(
+                frame_path, scan_id, source_folder=source_folder
+            )
+        source_frame = source_frames[is_registered]
 
         crop_path = _persist_plate_crop(
             frame_path,
@@ -189,12 +190,14 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> Non
             norm,
             direction,
             f"{scan_id}_{uuid.uuid4().hex[:6]}",
+            crop_folder=crop_folder,
         )
 
         details = json.dumps(
             {
-                "cooldown_s": PARKING_LOG_COOLDOWN_SECONDS,
+                "cooldown_s": parking_log_cooldown_seconds(),
                 "jitter_cooldown_s": PARKING_JITTER_COOLDOWN_SECONDS,
+                "canonical_plate": canonical,
                 "source_frame": source_frame,
                 "crop_frame": crop_path,
                 "plate_box": item.get("box"),
@@ -215,15 +218,23 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> Non
             details=details,
         )
         logged_any = True
+        logged_plates.append(
+            {
+                "plate_text": item.get("plate_text") or norm,
+                "plate_normalized": norm,
+                "box": item.get("box"),
+                "match_status": match_status,
+                "is_guest": bool(item.get("is_guest")),
+            }
+        )
         logging.info(
-            "[PARKING_LOGGED] plate=%s direction=%s status=%s vehicle_id=%s conf=%s crop=%s source=%s",
+            "[PARKING_LOGGED] plate=%s canonical=%s direction=%s status=%s vehicle_id=%s conf=%s",
             norm,
+            canonical,
             direction,
             match_status,
             vehicle_id,
             item.get("confidence"),
-            crop_path,
-            source_frame,
         )
 
     if logged_any and len(results) > 1:
@@ -233,3 +244,4 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> Non
             scan_id,
             source_frame,
         )
+    return logged_plates

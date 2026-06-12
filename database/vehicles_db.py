@@ -83,22 +83,66 @@ def soft_delete_vehicle(*, vehicle_id: int | None = None, plate_number: str | No
         return True
 
 
+def _vehicles_filter_stmt(
+    *,
+    plate: str | None = None,
+    owner: str | None = None,
+    is_guest: bool | None = None,
+):
+    stmt = _active_filter(select(Vehicle).order_by(Vehicle.id.desc()))
+    if plate:
+        norm = normalize_plate(plate)
+        stmt = stmt.where(Vehicle.plate_normalized.ilike(f"%{norm}%"))
+    if owner:
+        term = f"%{owner.strip()}%"
+        stmt = stmt.where(
+            (Vehicle.owner_name.ilike(term)) | (Vehicle.owner_lastname.ilike(term))
+        )
+    if is_guest is not None:
+        stmt = stmt.where(Vehicle.is_guest == is_guest)
+    return stmt
+
+
+def count_vehicles(
+    *,
+    plate: str | None = None,
+    owner: str | None = None,
+    is_guest: bool | None = None,
+) -> int:
+    with session_scope() as session:
+        stmt = select(func.count()).select_from(Vehicle)
+        stmt = _active_filter(stmt)
+        if plate:
+            norm = normalize_plate(plate)
+            stmt = stmt.where(Vehicle.plate_normalized.ilike(f"%{norm}%"))
+        if owner:
+            term = f"%{owner.strip()}%"
+            stmt = stmt.where(
+                (Vehicle.owner_name.ilike(term)) | (Vehicle.owner_lastname.ilike(term))
+            )
+        if is_guest is not None:
+            stmt = stmt.where(Vehicle.is_guest == is_guest)
+        return int(session.scalar(stmt) or 0)
+
+
 def list_vehicles(
     *,
     plate: str | None = None,
+    owner: str | None = None,
     is_guest: bool | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict]:
     with session_scope() as session:
-        stmt = _active_filter(select(Vehicle).order_by(Vehicle.id.desc()))
-        if plate:
-            norm = normalize_plate(plate)
-            stmt = stmt.where(Vehicle.plate_normalized.ilike(f"%{norm}%"))
-        if is_guest is not None:
-            stmt = stmt.where(Vehicle.is_guest == is_guest)
+        stmt = _vehicles_filter_stmt(plate=plate, owner=owner, is_guest=is_guest)
         stmt = stmt.limit(limit).offset(offset)
-        return [instance_to_dict(r) for r in session.execute(stmt).scalars().all()]
+        rows = []
+        for row in session.execute(stmt).scalars().all():
+            d = instance_to_dict(row)
+            if d.get("guest_expires_at") is not None and hasattr(d["guest_expires_at"], "isoformat"):
+                d["guest_expires_at"] = d["guest_expires_at"].isoformat()
+            rows.append(d)
+        return rows
 
 
 def list_expired_guest_vehicle_ids() -> list[int]:

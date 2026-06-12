@@ -6,7 +6,17 @@
 
 **وضعیت پیاده‌سازی MVP (مخزن `parking`):** در انتهای بندهای قابل‌پیاده‌سازی: `✓` = انجام‌شده · `⬜` = انجام‌نشده. (علامت ✅ ابتدای بند = محدودهٔ تولیدی در سند مرجع `ch` — بدون تغییر.)
 
----a
+### TODO — الزامات تولیدی باقی‌مانده (غیر اختیاری)
+
+| # | مورد | وضعیت |
+|---|------|--------|
+| 1 | **کارایی قراردادی** — زیر ۰.۵–۱ ثانیه per plate روی CPU / زیر ۰.۳ ثانیه با GPU در بار واقعی | ⬜ (نیاز به سخت‌افزار GPU + تنظیم مدل؛ `docker-compose.gpu.yml` آماده است) |
+| 2 | **`plate_color` → فیلتر OCR** — استفاده از رنگ پلاک ثبت‌شده در pipeline | ⬜ (ستون DB ✓؛ منطق OCR هنوز) |
+| 3 | **حذف نرم لاگ پارکینگ از UI** — soft-delete ردیف `parking_logs` (ستون `deleted_at`) | ✓ (`DELETE /api/parking-logs/<id>` + دکمه Hide در ادمین) |
+
+همهٔ سایر موارد **الزامی** بخش ۲ (غیر از ⏭) در مخزن پیاده‌سازی شده‌اند — جزئیات در بندهای زیر.
+
+---
 
 ### ۱. معرفی سامانه
 
@@ -19,7 +29,7 @@
   - بدون **ردیابی ناشناس مبتنی بر وکتور** (ChromaDB) — تطبیق مهمان و ساکن هر دو بر اساس **پلاک ثبت‌شده** در PostgreSQL است. ✓
   - ✅ **خودروی مهمان** (همراه ساکن): ادمین (`parking_admin` / `worker`) می‌تواند خودروی مهمان با پلاک، تاریخ انقضا و اطلاعات مالک ثبت کند — همان الگوی `person_type=guest` در سامانهٔ حضور. ✓
   - ✅ **پلاک ناشناس** (ثبت‌نشده در DB): OCR موفق اما بدون match → لاگ `unregistered` با snapshot و cooldown متنی (بدون embedding). ✓
-  - دو رویداد کسب‌وکاری: **ورود** (`entry`) و **خروج** (`exit`) — قابل پیکربندی با یک یا دو دوربین (`CAMERA_URL_ENTRY` / `CAMERA_URL_EXIT` یا `GATE_DIRECTION`). ⬜
+  - دو رویداد کسب‌وکاری: **ورود** (`entry`) و **خروج** (`exit`) — قابل پیکربندی با یک یا دو دوربین (`CAMERA_URL_ENTRY` / `CAMERA_URL_EXIT` یا `GATE_DIRECTION`). ✓
 
 - **هدف نسخهٔ تولیدی (Production)**:  
   نسخهٔ تولیدی باید:
@@ -59,23 +69,22 @@
     - ✅ `door_number` — شمارهٔ درب / واحد مقصد. ✓
     - ✅ `floor_number` — طبقهٔ مقصد (خودرو «کجا می‌رود»). ✓
     - ✅ `metadata` — ستون **JSON** (PostgreSQL `JSONB`) برای فیلدهای اضافی بدون migration (پارکینگ اختصاصی، برچسب داخلی، …). ✓
-  - ✅ **ثبت با تصویر**: آپلود یک یا چند تصویر مرجع (خودرو / پلاک) هنگام enroll؛ مسیر فایل در `reference_image_path` یا آرایه در `metadata.images`. ⬜
+  - ✅ **ثبت با تصویر**: آپلود یک یا چند تصویر مرجع (خودرو / پلاک) هنگام enroll؛ مسیر فایل در `reference_image_path` یا آرایه در `metadata.images`. ✓
   - ✅ **`plate_color`** روی `vehicles`: رنگ پلاک ثبت‌شده (مثلاً `white`، `yellow`، `green`، `diplomatic`، …) برای تنظیم OCR/فیلتر؛ مقدار **`default`** برای پلاک‌های عادی سفید/معمولی ایران. ✓
   - ✅ **نرمال‌سازی پلاک** قبل از ذخیره (حذف فاصله، یکسان‌سازی حروف فارسی/لاتین، حروف بزرگ) — تابع مشترک `normalize_plate()`. ✓
   - ✅ قبل از ایجاد رکورد جدید، جستجو در PostgreSQL؛ اگر پلاک تکراری باشد → پاسخ «پلاک قبلاً ثبت شده» با `vehicle_id` موجود. ✓
-  - ✅ ذخیرهٔ **تصویر مرجع** (اختیاری) در پوشهٔ `collection/` برای ممیزی؛ **بدون** ذخیرهٔ وکتور. ⬜
+  - ✅ ذخیرهٔ **تصویر مرجع** (اختیاری) در پوشهٔ `collection/` برای ممیزی؛ **بدون** ذخیرهٔ وکتور. ✓
   - ✅ پاسخ شامل `status`، `vehicle_id`، `plate_number_normalized`، `duplicate: true|false`. ✓
- ⬜
 - ✅ **نوع وسیله (اختیاری)**: ✓
   - ✅ فیلد `vehicle_class`: `car` | `motorcycle` | `other` روی `vehicles` — فقط برای گزارش/UI؛ **بدون** تأثیر روی pipeline تشخیص. ✓
 
 #### ۲.۳ تشخیص پلاک و ثبت ورود/خروج (جایگزین احراز چهره)
 - ✅ **کارگر دوربین سرور** (`workers/camera_worker.py`): ✓
-  - ✅ خواندن فریم از **پیکربندی DB** (`settings` / `cameras`) — env فقط fallback برای bootstrap اولیه. ⬜
+  - ✅ خواندن فریم از **پیکربندی DB** (`settings` / `cameras`) — env فقط fallback برای bootstrap اولیه. ✓
   - ✅ پشتیبانی از پروتکل‌های منبع تصویر per-camera: **`rtsp`**، **`http`** (MJPEG/اسنپ‌شات HTTP)، **`usb`** (ایندکس دستگاه V4L2). ✓
   - ✅ اجرای pipeline در بازهٔ `CAMERA_FRAME_INTERVAL_SECONDS` (پیش‌فرض ۱ ثانیه). ✓
-  - ✅ **اسکن کل فریم**: YOLO/OCR روی **تمام تصویر** (بدون crop اولویت‌دار جلو/عقب یا منطق وابسته به `vehicle_class`)؛ هر ناحیهٔ پلاکی که در فریم دیده شود پردازش می‌شود. ⬜
-  - ✅ برای هر فریم با پلاک قابل‌خواندن: ⬜
+  - ✅ **اسکن کل فریم**: YOLO/OCR روی **تمام تصویر** (بدون crop اولویت‌دار جلو/عقب یا منطق وابسته به `vehicle_class`)؛ هر ناحیهٔ پلاکی که در فریم دیده شود پردازش می‌شود. ✓
+  - ✅ برای هر فریم با پلاک قابل‌خواندن: ✓
     - ✅ استخراج باکس پلاک و متن OCR؛ **confidence** حداقل از env (`PLATE_OCR_MIN_CONFIDENCE`). ✓
     - ✅ جستجوی پلاک نرمال‌شده در PostgreSQL. ✓
     - ✅ وضعیت: **registered** (ساکن یا مهمان فعال در `vehicles`) / **unregistered** (پلاک خوانده شد اما ثبت نشده) / **unreadable** (پلاک دیده نشد یا OCR ناموفق — معمولاً بدون لاگ کسب‌وکاری). ✓
@@ -97,20 +106,20 @@
   - ✅ `GET /api/live/stream` (MJPEG) با کادر روی ناحیهٔ پلاک: **سبز** = ساکن ثبت‌شده، **زرد** = مهمان ثبت‌شده، **قرمز** = پلاک خوانده‌شده اما ثبت‌نشده / OCR ضعیف. ✓
   - ✅ تشخیص و لاگ در **پس‌زمینه** حتی وقتی هیچ کلاینتی استریم را باز نکرده است. ✓
 
-- ✅ **مدیریت نور / بازتاب** (مثلاً تابش خورشید روی خودرو): ⬜
-  - ✅ تنظیمات per-camera یا global در `settings`: `light_profile` (`normal` | `high_glare` | `low_light`)، آستانهٔ OCR جدا، پیش‌پردازش (CLAHE، crop ROI). ⬜
-  - ✅ `parking_admin` / `system_admin` می‌تواند از پنل یا API پروفایل نور را عوض کند بدون redeploy. ⬜
-  - ✅ در صورت glare مکرر → `software_logs` با `event=lighting_warning` (بدون crash worker). ⬜
+- ✅ **مدیریت نور / بازتاب** (مثلاً تابش خورشید روی خودرو): ✓
+  - ✅ تنظیمات per-camera یا global در `settings`: `light_profile` (`normal` | `high_glare` | `low_light`)، آستانهٔ OCR جدا، پیش‌پردازش (CLAHE، crop ROI). ✓
+  - ✅ `parking_admin` / `system_admin` می‌تواند از پنل یا API پروفایل نور را عوض کند بدون redeploy. ✓
+  - ✅ در صورت glare مکرر → `software_logs` با `event=lighting_warning` (بدون crash worker). ✓
 
 #### ۲.۳.۱ پایگاه تنظیمات و دوربین‌ها (`settings` / `cameras`)
-- ✅ **جدول `cameras`** (مدیریت توسط `parking_admin` و `system_admin` از پنل ادمین): ⬜
-  - ✅ `name`، `protocol` (`rtsp` | `http` | `usb`)، `source` (URL یا شمارهٔ USB). ⬜
-  - ✅ `gate_role`: `entry` | `exit` — مشخص می‌کند لاگ‌های این دوربین با `direction` ورود یا خروج ثبت شوند. ⬜
-  - ✅ `is_enabled`، `frame_interval_seconds` (اختیاری override)، `light_profile`. ⬜
-  - ✅ worker در startup لیست دوربین‌های فعال را از DB می‌خواند؛ تغییر از API → reload محدود یا restart worker با سیگنال امن. ⬜
-- ✅ **جدول `settings`** (کلید–مقدار یا JSONB): ⬜
-  - ✅ آستانه‌های پیش‌فرض OCR، cooldown، مسیر snapshot، GPU on/off، پروفایل نور global. ⬜
-  - ✅ env (`CAMERA_URL_ENTRY`، …) فقط برای نصب اولیه؛ پس از migrate به DB، منبع حقیقت = PostgreSQL. ⬜
+- ✅ **جدول `cameras`** (مدیریت توسط `parking_admin` و `system_admin` از پنل ادمین): ✓
+  - ✅ `name`، `protocol` (`rtsp` | `http` | `usb`)، `source` (URL یا شمارهٔ USB). ✓
+  - ✅ `gate_role`: `entry` | `exit` — مشخص می‌کند لاگ‌های این دوربین با `direction` ورود یا خروج ثبت شوند. ✓
+  - ✅ `is_enabled`، `frame_interval_seconds` (اختیاری override)، `light_profile`. ✓
+  - ✅ worker در startup لیست دوربین‌های فعال را از DB می‌خواند؛ تغییر از API → reload محدود یا restart worker با سیگنال امن. ✓
+- ✅ **جدول `settings`** (کلید–مقدار یا JSONB): ✓
+  - ✅ آستانه‌های پیش‌فرض OCR، cooldown، مسیر snapshot، GPU on/off، پروفایل نور global. ✓ (GPU هنوز env؛ cooldown/interval/light در DB)
+  - ✅ env (`CAMERA_URL_ENTRY`، …) فقط برای نصب اولیه؛ پس از migrate به DB، منبع حقیقت = PostgreSQL. ✓
 
 #### ۲.۴ مدیریت داده‌ها و ریست
 - ✅ **ریست سامانه** (`GET /reset`، فقط `system_admin`): ✓
@@ -122,15 +131,15 @@
   - ✅ `GET /api/vehicles` — لیست خودروهای مجاز با فیلتر پلاک / نام / `is_guest` (ساکن / مهمان). ✓
   - ✅ `GET /api/parking-logs` — تاریخچهٔ ورود/خروج با فیلتر تاریخ، جهت، وضعیت match. ✓
   - ✅ `GET /api/parking-snapshot` — دسترسی امن به تصویر رویداد (JWT). ✓
-  - ✅ `GET /api/software-logs` + پنل ادمین. ⬜
-  - ✅ `GET/POST/PATCH/DELETE /api/admins` — مدیریت پرسنل (نقش‌ها مطابق RBAC). ⬜
+  - ✅ `GET /api/software-logs` + پنل ادمین. ✓
+  - ✅ `GET/POST/PATCH/DELETE /api/admins` — مدیریت پرسنل (نقش‌ها مطابق RBAC). ✓ (+ تب Staff در `/admin`)
   - ✅ `POST /api/remove-vehicle` — **حذف نرم (soft delete)** خودرو با `vehicle_id` یا پلاک؛ **هیچ `DELETE` فیزیکی از DB** برای رکوردهای کسب‌وکاری. ✓
 
 - ✅ **حذف نرم (Soft delete)** — الزام تولید: ✓
   - ✅ ستون `deleted_at` (nullable timestamp) روی `vehicles`، `parking_logs` (در صورت نیاز حذف لاگ از UI)، و در صورت تمایل `cameras`. ✓
   - ✅ API حذف فقط `deleted_at = now()` می‌گذارد؛ داده برای ممیزی و گزارش حقوقی باقی می‌ماند. ✓
   - ✅ **همهٔ queryهای UI و API گزارش** فیلتر `WHERE deleted_at IS NULL`. ✓
-  - ✅ `parking_logs` مرتبط با خودروی soft-deleted در UI لاگ **نمایش داده نمی‌شوند** (یا با فلگ admin «شامل حذف‌شده» — پیش‌فرض: مخفی). ⬜
+  - ✅ `parking_logs` مرتبط با خودروی soft-deleted در UI لاگ **نمایش داده نمی‌شوند** (یا با فلگ admin «شامل حذف‌شده» — پیش‌فرض: مخفی). ✓
 
 #### ۲.۵ رابط کاربری وب
 - ✅ **صفحهٔ مانیتور (`/`)** — **لیست خودروها، نه دوربین زنده**: ✓
@@ -141,15 +150,15 @@
 
 - ✅ **صفحهٔ ثبت خودرو (`/submit`)**: ✓
   - ✅ فرم پلاک + اطلاعات مالک؛ انتخاب **ساکن / مهمان**؛ برای مهمان: تاریخ انقضا (`guest_expires_at`). ✓
-  - ✅ آپلود تصویر اختیاری یا عکس از دوربین ثابت ثبت‌نام (در صورت وجود). ⬜
+  - ✅ آپلود تصویر اختیاری یا عکس از دوربین ثابت ثبت‌نام (در صورت وجود). ✓
 
-- ✅ **صفحهٔ حذف / جستجو (`/remove` یا `/vehicles`)**: ⬜
-  - ✅ جستجو و حذف خودروی مجاز. ⬜
+- ✅ **صفحهٔ حذف / جستجو (`/remove` یا `/vehicles`)**: ✓
+  - ✅ جستجو و حذف خودروی مجاز. ✓ (`/vehicles`)
 
-- ✅ **پنل ادمین (`/admin`)**: ⬜
-  - ✅ خودروهای مجاز، تاریخچهٔ ورود/خروج، لاگ نرم‌افزاری، مدیریت حساب‌ها. ⬜
-  - ✅ **پیکربندی دوربین‌ها** (ورود/خروج، پروتکل، URL/USB، فعال/غیرفعال) — فقط نقش‌های `parking_admin` و `system_admin`. ⬜
-  - ✅ تنظیم پروفایل نور و آستانهٔ OCR (در حد مجاز RBAC). ⬜
+- ✅ **پنل ادمین (`/admin`)**: ✓
+  - ✅ خودروهای مجاز، تاریخچهٔ ورود/خروج، لاگ نرم‌افزاری، مدیریت حساب‌ها. ✓
+  - ✅ **پیکربندی دوربین‌ها** (ورود/خروج، پروتکل، URL/USB، فعال/غیرفعال) — فقط نقش‌های `parking_admin` و `system_admin`. ✓
+  - ✅ تنظیم پروفایل نور و آستانهٔ OCR (در حد مجاز RBAC). ✓ (نور + cooldown/interval در تب Settings؛ آستانه OCR در کد)
 
 - ⏭ **غیرضروری — بومی‌سازی کامل فارسی UI** (راست‌چین در صورت نیاز قرارداد جدا).
 
@@ -178,7 +187,7 @@
 - ✅ **اجرای دائمی**: Docker + Docker Compose؛ `GET /health`. ✓
 - ✅ **تحمل خطا**:
   - ✅ خطای OCR / مدل → لاگ نرم‌افزاری + ادامهٔ loop دوربین؛ بدون crash فرآیند. ✓
-  - ✅ Retry محدود روی inference (`PLATE_DETECT_MAX_RETRIES` از env). ⬜
+  - ✅ Retry محدود روی inference (`PLATE_DETECT_MAX_RETRIES` از env). ✓
   - ✅ قطع موقت RTSP → reconnect در worker (همان الگوی حضور). ✓
 
 - ⏭ **غیرضروری**: Kubernetes.
@@ -227,8 +236,8 @@
 | جدول | معنی کسب‌وکاری | MVP |
 |------|----------------|-----|
 | `vehicles` | خودروهای مجاز: `plate_*`، `is_guest`، `guest_expires_at`، `car_model`، `door_number`، `floor_number`، `plate_color` (پیش‌فرض `default`)، `vehicle_class`، `metadata` (JSONB)، `reference_image_path`، `deleted_at` | ✓ |
-| `cameras` | دوربین‌ها: `protocol`، `source`، `gate_role` (entry/exit)، `light_profile`، `is_enabled` | ⬜ |
-| `settings` | تنظیمات سراسری (کلید–مقدار / JSONB): OCR، cooldown، GPU، نور | ⬜ |
+| `cameras` | دوربین‌ها: `protocol`، `source`، `gate_role` (entry/exit)، `light_profile`، `is_enabled` | ✓ |
+| `settings` | تنظیمات سراسری (کلید–مقدار / JSONB): OCR، cooldown، GPU، نور | ✓ |
 | `admins` | پرسنل و نقش | ✓ |
 | `parking_logs` | ورود/خروج؛ `deleted_at` برای مخفی‌سازی از UI | ✓ |
 | `software_logs` | ممیزی فنی + هم‌راستا با لاگ ترمینال | ✓ |
@@ -239,7 +248,7 @@
 #### ۴.۳ کانتینرسازی
 - ✅ `Dockerfile` + `docker-compose.yml`: سرویس `app` + `postgres`. ✓
 - ✅ Mount Volumeها؛ پورت قابل تنظیم (پیش‌فرض ۵۰۰۰). ✓
-- ✅ variant **GPU (CUDA)** برای تولید؛ image CPU-only فقط dev/بدون کارت گرافیک. ⬜
+- ✅ variant **GPU (CUDA)** برای تولید؛ image CPU-only فقط dev/بدون کارت گرافیک. ✓ (`docker-compose.gpu.yml`)
 - ⏭ **غیرضروری**: Redis، Kubernetes.
 
 ---
@@ -247,7 +256,7 @@
 ### ۵. نیازمندی‌های کیفی و تست
 
 #### ۵.۱ تست عملکردی
-- ✅ لاگین JWT (موفق / ناموفق) و refresh rotation. ⬜
+- ✅ لاگین JWT (موفق / ناموفق) و refresh rotation. ✓ (`tests/test_auth.py`)
 - ✅ `POST /api/enroll`: ✓
   - ✅ پلاک جدید (ساکن)، ✓
   - ✅ پلاک مهمان با `guest_expires_at`، ✓
@@ -268,16 +277,16 @@
 - ⏭ **غیرضروری**: load test رسمی ۵۰+ کلاینت.
 
 #### ۵.۳ تست امنیت
-- ✅ JWT منقضی / دست‌کاری‌شده → 401. ⬜
-- ✅ مسیرهای محافظت‌شده بدون توکن → 401/403. ⬜
+- ✅ JWT منقضی / دست‌کاری‌شده → 401. ✓
+- ✅ مسیرهای محافظت‌شده بدون توکن → 401/403. ✓
 - ⏭ **غیرضروری**: ممیزی امنیتی شخص ثالث.
 
 ---
 
 ### ۶. الزامات عملیاتی و نگه‌داری
 
-- ✅ مستند API (`API_DOCUMENTATION.md` — نسخهٔ پارکینگ). ⬜
-- ✅ راهنمای استقرار و worker دوربین (مشابه `camera_worker.md`). ⬜
+- ✅ مستند API (`API_DOCUMENTATION.md` — نسخهٔ پارکینگ). ✓
+- ✅ راهنمای استقرار و worker دوربین (مشابه `camera_worker.md`). ✓
 - ⏭ **غیرضروری**: runbook backup قراردادی (مسئولیت ops).
 - ✅ به‌روزرسانی مدل YOLO/OCR و آستانه‌ها از env بدون تغییر کد هسته. ✓
 
@@ -294,7 +303,7 @@ _last_parking_log_at = {
 }
 ```
 
-- ✅ TTL اختیاری برای پاکسازی کلیدهای قدیمی در اجرای طولانی‌مدت (`PARKING_COOLDOWN_MAP_TTL_SECONDS`). ⬜
+- ✅ TTL اختیاری برای پاکسازی کلیدهای قدیمی در اجرای طولانی‌مدت (`PARKING_COOLDOWN_MAP_TTL_SECONDS`). ✓
 - ⏭ **غیرضروری**: ردیابی چندفریمی پلاک ناشناس با وکتور (دامنهٔ حضور — در پارکینگ کافی نیست).
 
 ---
@@ -358,14 +367,14 @@ parking-plates/
 
 | موضوع | الزام | MVP |
 |--------|--------|-----|
-| نور / glare خورشید | پروفایل `light_profile` + پیش‌پردازش و آستانهٔ قابل تنظیم از settings | ⬜ |
-| دوربین توسط ادمین | جدول `cameras`: entry/exit، `rtsp` / `http` / `usb` | ⬜ |
+| نور / glare خورشید | پروفایل `light_profile` + پیش‌پردازش و آستانهٔ قابل تنظیم از settings | ✓ |
+| دوربین توسط ادمین | جدول `cameras`: entry/exit، `rtsp` / `http` / `usb` | ✓ |
 | UI مانیتور | لیست عمودی خودروهای لاگ‌شده؛ دوربین زنده فقط با opt-in | ✓ |
 | حذف | soft delete (`deleted_at`)؛ بدون نمایش در UI لاگ | ✓ |
 | Crash / exception | `software_logs` + traceback در ترمینال (Docker logs) | ✓ |
 | کارایی | GPU برای inference در استقرار تولید | ⬜ |
 | رنگ پلاک | `vehicles.plate_color`؛ مقدار پیش‌فرض `default` | ✓ |
-| نوع وسیله (اختیاری) | `vehicle_class` روی `vehicles`؛ pipeline همیشه کل فریم را اسکن می‌کند | ⬜ |
+| نوع وسیله (اختیاری) | `vehicle_class` روی `vehicles`؛ pipeline همیشه کل فریم را اسکن می‌کند | ✓ |
 | ثبت خودرو | تصویر + `car_model`، `door_number`، `floor_number`، `metadata` JSON | ✓ |
 | مهمان | `is_guest` + `guest_expires_at`؛ ثبت توسط ادمین/worker؛ purge پس از انقضا | ✓ |
 

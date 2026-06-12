@@ -7,8 +7,18 @@ import re
 
 from helpers.plate_normalize import normalize_plate
 
-_JUNK_CHARS_RE = re.compile(r"[=_\-|*/\\.+:;,\"'<>()\[\]{}`~!@#$%^&*?]+")
+# Note: "|" and "`" are NOT junk — OCR often emits them for capital "I"; mapped in fix_ocr_confusions().
+_JUNK_CHARS_RE = re.compile(r"[=_\-*/\\.+:;,\"'<>()\[\]{}~!@#$%^&*?]+")
 _ALNUM_PLATE = re.compile(r"^[A-Z0-9\u0600-\u06FF]+$")
+
+# Thin-letter confusions before junk stripping (cross-border safe — no format templates).
+_OCR_CHAR_FIXES = str.maketrans({
+    "|": "I",
+    "`": "I",
+    "¦": "I",
+    "ǀ": "I",
+    "ℐ": "I",
+})
 
 
 def plate_min_length() -> int:
@@ -19,11 +29,79 @@ def plate_max_length() -> int:
     return min(14, max(plate_min_length(), int(os.environ.get("PLATE_MAX_LENGTH", "12"))))
 
 
+def fix_latin_ambiguous_chars(text: str) -> str:
+    """
+    Fix common Latin OCR swaps using neighbor context (cross-border safe).
+    - 1 -> I when beside letters (thin I misread as one)
+    - 0 <-> O using letter vs digit neighbors
+    """
+    if not text or not text.isascii():
+        return text
+    chars = list(text.upper())
+    n = len(chars)
+
+    def latin_letter(ch: str) -> bool:
+        return len(ch) == 1 and ch.isalpha() and ch.isascii()
+
+    def digit(ch: str) -> bool:
+        return len(ch) == 1 and ch.isdigit()
+
+    for i in range(n):
+        ch = chars[i]
+        left = chars[i - 1] if i > 0 else ""
+        right = chars[i + 1] if i + 1 < n else ""
+        if ch == "1" and not digit(left) and not digit(right):
+            if latin_letter(left) or latin_letter(right):
+                chars[i] = "I"
+        elif ch == "0" and latin_letter(left) and latin_letter(right):
+            chars[i] = "O"
+        elif ch == "O" and digit(left) and (digit(right) or right == ""):
+            chars[i] = "0"
+        elif ch == "O" and digit(right) and (digit(left) or left == ""):
+            chars[i] = "0"
+    return "".join(chars)
+
+
+def ocr_read_variants(cleaned: str) -> list[str]:
+    """Alternate reads for ambiguous D/O between letters (both kept for ranking)."""
+    if not cleaned:
+        return []
+    text = clean_plate_ocr_text(cleaned)
+    if not text or not text.isascii():
+        return [text] if text else []
+    variants = {text}
+    chars = list(text)
+    for i, ch in enumerate(chars):
+        if i == 0 or i + 1 >= len(chars):
+            continue
+        left, right = chars[i - 1], chars[i + 1]
+        if not (left.isalpha() and right.isalpha()):
+            continue
+        if ch == "O":
+            chars[i] = "D"
+            variants.add("".join(chars))
+            chars[i] = "O"
+        elif ch == "D":
+            chars[i] = "O"
+            variants.add("".join(chars))
+            chars[i] = "D"
+    return list(variants)
+
+
+def fix_ocr_confusions(raw: str | None) -> str:
+    """Map common misreads (e.g. pipe → capital I) before junk removal."""
+    if not raw:
+        return ""
+    text = raw.strip().translate(_OCR_CHAR_FIXES)
+    return fix_latin_ambiguous_chars(text)
+
+
 def sanitize_plate_ocr_text(raw: str | None) -> str:
     """Drop divider junk and spaces; keep what OCR returned."""
     if not raw:
         return ""
-    text = _JUNK_CHARS_RE.sub("", raw.strip())
+    text = fix_ocr_confusions(raw)
+    text = _JUNK_CHARS_RE.sub("", text)
     return re.sub(r"\s+", "", text)
 
 
@@ -54,6 +132,11 @@ def is_plausible_plate(raw: str | None, *, min_score: float = 0.55) -> bool:
     return True
 
 
-def rank_ocr_candidate(_text: str, confidence: float) -> float:
-    """Pick the OCR read with the highest engine confidence — no format guessing."""
-    return max(0.0, min(1.0, float(confidence)))
+def rank_ocr_candidate(text: str, confidence: float) -> float:
+    """
+    Rank OCR candidates: primary = confidence, small tie-break for longer text
+    (dropped thin letters like I shorten the string at similar confidence).
+    """
+    base = max(0.0, min(1.0, float(confidence)))
+    length_bonus = min(0.06, max(0, len(text) - 4) * 0.008)
+    return min(1.0, base + length_bonus)

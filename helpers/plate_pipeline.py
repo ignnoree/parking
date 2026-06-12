@@ -13,9 +13,8 @@ from helpers.plate_normalize import normalize_plate
 
 logger = logging.getLogger(__name__)
 
-
-def plate_ocr_min_confidence() -> float:
-    return max(0.0, min(1.0, float(os.environ.get("PLATE_OCR_MIN_CONFIDENCE", "0.45"))))
+# Combined detect×OCR×format gate (not editable via DB or .env).
+PLATE_OCR_MIN_CONFIDENCE = 0.45
 
 
 def plate_format_min_score() -> float:
@@ -110,7 +109,7 @@ def detect_plates_in_image(image_path: str) -> list[dict]:
 def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
     """Full check: detect plates, match vehicles, shape for parking_logging."""
     detections = detect_plates_in_image(image_path)
-    min_conf = plate_ocr_min_confidence()
+    min_conf = PLATE_OCR_MIN_CONFIDENCE
     results: list[dict] = []
 
     for det in detections:
@@ -139,13 +138,15 @@ def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
                     exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
                 if exp_dt <= datetime.datetime.now(datetime.timezone.utc):
                     vehicle = None
+        row = {
+            "plate_text": det.get("plate_text") or norm,
+            "plate_normalized": norm,
+            "confidence": conf,
+            "box": det.get("box"),
+        }
         if vehicle:
-            results.append(
+            row.update(
                 {
-                    "plate_text": det.get("plate_text") or norm,
-                    "plate_normalized": norm,
-                    "confidence": conf,
-                    "box": det.get("box"),
                     "match_status": "registered",
                     "vehicle_id": vehicle["id"],
                     "is_guest": bool(vehicle.get("is_guest")),
@@ -153,17 +154,14 @@ def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
                 }
             )
         else:
-            results.append(
+            row.update(
                 {
-                    "plate_text": det.get("plate_text") or norm,
-                    "plate_normalized": norm,
-                    "confidence": conf,
-                    "box": det.get("box"),
                     "match_status": "unregistered",
                     "vehicle_id": None,
                     "is_guest": False,
                 }
             )
+        results.append(row)
 
     payload = {
         "status": "ok",

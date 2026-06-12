@@ -11,3 +11,4 @@ fast-alpr[onnx]>=0.4.0
 paddlepaddle>=3.3.0
 paddleocr>=3.6.0
 easyocr>=1.7.0
+pytest>=8.0.0

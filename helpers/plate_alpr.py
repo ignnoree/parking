@@ -8,13 +8,15 @@ import statistics
 import threading
 from typing import Literal
 
+import cv2
 import numpy as np
 
-from fast_alpr.alpr import ALPR
+from fast_alpr.alpr import ALPR, ALPRResult
 from fast_alpr.base import BaseOCR, OcrResult
 from fast_alpr.default_ocr import DefaultOCR
 
-from helpers.plate_format import clean_plate_ocr_text, rank_ocr_candidate, sanitize_plate_ocr_text
+from helpers.plate_crop import crop_ocr_plate
+from helpers.plate_format import clean_plate_ocr_text, ocr_read_variants, rank_ocr_candidate, sanitize_plate_ocr_text
 from helpers.plate_ocr_preprocess import build_ocr_variants
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,12 @@ def _use_gpu() -> bool:
     if mode in {"0", "false", "no", "off"}:
         return False
     if mode in {"1", "true", "yes", "on"}:
-        return True
+        try:
+            import torch
+
+            return torch.cuda.is_available()
+        except Exception:
+            return False
     try:
         import torch
 
@@ -73,29 +80,58 @@ def plate_ocr_model() -> str:
 
 
 def plate_ocr_langs() -> list[str]:
-    raw = os.environ.get("PLATE_OCR_LANGS", "en").strip()
-    langs = [part.strip() for part in raw.split(",") if part.strip()]
-    return langs or ["en"]
+    raw = os.environ.get("PLATE_OCR_LANGS", "en,ar").strip()
+    langs = [part.strip().lower() for part in raw.split(",") if part.strip()]
+    return langs or ["en", "ar"]
+
+
+def paddle_ocr_langs() -> list[str]:
+    """PaddleOCR lang codes to run (e.g. en + ar for Latin and Arabic plates)."""
+    raw = os.environ.get("PLATE_PADDLE_LANGS", "").strip()
+    if raw:
+        return [part.strip().lower() for part in raw.split(",") if part.strip()]
+    raw_single = os.environ.get("PLATE_PADDLE_LANG", "").strip().lower()
+    if raw_single:
+        return [raw_single]
+    codes: list[str] = []
+    for token in plate_ocr_langs():
+        if token in {"ar", "arabic"}:
+            codes.append("ar")
+        elif token in {"en", "english", "latin"}:
+            codes.append("en")
+    return codes or ["en", "ar"]
 
 
 def paddle_ocr_lang() -> str:
-    """PaddleOCR lang code (en, ar, etc.)."""
-    raw = os.environ.get("PLATE_PADDLE_LANG", "").strip()
-    if raw:
-        return raw
-    langs = plate_ocr_langs()
-    if "ar" in langs or "arabic" in langs:
-        return "ar"
-    return "en"
+    """Primary Paddle lang (logging); use paddle_ocr_langs() for bilingual reads."""
+    langs = paddle_ocr_langs()
+    return "+".join(langs)
 
 
-def plate_ocr_backend() -> Literal["paddle", "ensemble", "fast", "easyocr"]:
-    raw = os.environ.get("PLATE_OCR_BACKEND", "paddle").strip().lower()
+def easyocr_langs() -> list[str]:
+    """EasyOCR language codes derived from PLATE_OCR_LANGS."""
+    codes: list[str] = []
+    for token in plate_ocr_langs():
+        if token in {"ar", "arabic"}:
+            codes.append("ar")
+        elif token in {"en", "english", "latin"}:
+            codes.append("en")
+    return codes or ["en", "ar"]
+
+
+def plate_ocr_backend() -> Literal["paddle", "bilingual", "ensemble", "fast", "easyocr"]:
+    raw = os.environ.get("PLATE_OCR_BACKEND", "bilingual").strip().lower()
     if raw in {"paddle", "paddleocr"}:
         return "paddle"
-    if raw in {"fast", "easyocr", "ensemble"}:
-        return raw
-    return "paddle"
+    if raw in {"bilingual", "dual", "both"}:
+        return "bilingual"
+    if raw == "fast":
+        return "fast"
+    if raw == "easyocr":
+        return "easyocr"
+    if raw == "ensemble":
+        return "ensemble"
+    return "bilingual"
 
 
 def _ocr_confidence(conf: float | list[float]) -> float:
@@ -122,11 +158,14 @@ def _finalize(result: OcrResult | None) -> OcrResult | None:
 def _pick_best(candidates: list[OcrResult]) -> OcrResult | None:
     if not candidates:
         return None
-    best = max(
-        candidates,
+    finalized = [_finalize(c) for c in candidates]
+    valid = [c for c in finalized if c is not None and c.text]
+    if not valid:
+        return None
+    return max(
+        valid,
         key=lambda item: rank_ocr_candidate(item.text, _ocr_confidence(item.confidence)),
     )
-    return _finalize(best)
 
 
 def _merge_line_reads(reads: list[tuple[str, float]]) -> OcrResult | None:
@@ -141,6 +180,20 @@ def _merge_line_reads(reads: list[tuple[str, float]]) -> OcrResult | None:
         text=merged,
         confidence=statistics.mean(confs) if confs else 0.0,
     )
+
+
+def _with_ambiguity_variants(results: list[OcrResult]) -> list[OcrResult]:
+    expanded = list(results)
+    for result in results:
+        for variant in ocr_read_variants(result.text):
+            if variant and variant != result.text:
+                expanded.append(
+                    OcrResult(
+                        text=variant,
+                        confidence=max(0.0, float(result.confidence) * 0.99),
+                    )
+                )
+    return expanded
 
 
 class PaddleOcrBackend(BaseOCR):
@@ -234,7 +287,30 @@ class PaddleOcrBackend(BaseOCR):
                     )
                 )
 
-        return results
+        return _with_ambiguity_variants(results)
+
+    def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
+        return _pick_best(self.collect_candidates(cropped_plate))
+
+
+class BilingualPaddleOcrBackend(BaseOCR):
+    """Run PaddleOCR once per language (e.g. en + ar) and pick the best plate read."""
+
+    def __init__(self, langs: list[str], gpu: bool) -> None:
+        unique = list(dict.fromkeys(lang for lang in langs if lang))
+        self._langs = unique or ["en", "ar"]
+        self._backends = [PaddleOcrBackend(lang, gpu) for lang in self._langs]
+
+    def collect_candidates(self, cropped_plate: np.ndarray) -> list[OcrResult]:
+        if cropped_plate is None or cropped_plate.size == 0:
+            return []
+        candidates: list[OcrResult] = []
+        for backend in self._backends:
+            try:
+                candidates.extend(backend.collect_candidates(cropped_plate))
+            except Exception:
+                logger.debug("PaddleOCR lang=%s failed", backend._lang, exc_info=True)
+        return candidates
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
         return _pick_best(self.collect_candidates(cropped_plate))
@@ -256,7 +332,7 @@ class FastPlateOcrBackend(BaseOCR):
                 cleaned = sanitize_plate_ocr_text(out.text)
                 if cleaned:
                     results.append(OcrResult(text=cleaned, confidence=out.confidence))
-        return results
+        return _with_ambiguity_variants(results)
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
         return _pick_best(self.collect_candidates(cropped_plate))
@@ -289,25 +365,24 @@ class EasyOcrBackend(BaseOCR):
                 cleaned = sanitize_plate_ocr_text(str(text))
                 if cleaned:
                     results.append(OcrResult(text=cleaned, confidence=float(conf)))
-        return results
+        return _with_ambiguity_variants(results)
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
         return _pick_best(self.collect_candidates(cropped_plate))
 
 
 class EnsembleOcrBackend(BaseOCR):
-    """PaddleOCR + legacy engines; pick highest-confidence read."""
+    """Bilingual Paddle + global plate model + EasyOCR; pick highest-confidence read."""
 
-    def __init__(self, model: str, langs: list[str], gpu: bool) -> None:
-        self._paddle = PaddleOcrBackend(paddle_ocr_lang(), gpu)
+    def __init__(self, model: str, gpu: bool) -> None:
+        self._paddle = BilingualPaddleOcrBackend(paddle_ocr_langs(), gpu)
         self._fast = FastPlateOcrBackend(model, gpu)
         self._easy_ocr: EasyOcrBackend | None = None
-        self._langs = langs
         self._gpu = gpu
 
     def _easy_backend(self) -> EasyOcrBackend:
         if self._easy_ocr is None:
-            self._easy_ocr = EasyOcrBackend(self._langs, self._gpu)
+            self._easy_ocr = EasyOcrBackend(easyocr_langs(), self._gpu)
         return self._easy_ocr
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
@@ -321,18 +396,59 @@ class EnsembleOcrBackend(BaseOCR):
         return _pick_best(candidates)
 
 
+def _build_paddle_backend(gpu: bool) -> BaseOCR:
+    langs = paddle_ocr_langs()
+    if len(langs) <= 1:
+        return PaddleOcrBackend(langs[0] if langs else "en", gpu)
+    return BilingualPaddleOcrBackend(langs, gpu)
+
+
 def _build_ocr_backend(gpu: bool) -> BaseOCR:
     backend = plate_ocr_backend()
     model = plate_ocr_model()
-    langs = plate_ocr_langs()
 
     if backend == "paddle":
-        return PaddleOcrBackend(paddle_ocr_lang(), gpu)
+        return _build_paddle_backend(gpu)
+    if backend == "bilingual":
+        return BilingualPaddleOcrBackend(paddle_ocr_langs(), gpu)
     if backend == "fast":
         return FastPlateOcrBackend(model, gpu)
     if backend == "easyocr":
-        return EasyOcrBackend(langs, gpu)
-    return EnsembleOcrBackend(model, langs, gpu)
+        return EasyOcrBackend(easyocr_langs(), gpu)
+    return EnsembleOcrBackend(model, gpu)
+
+
+class PaddedALPR(ALPR):
+    """Run OCR on a padded plate crop so leading/trailing characters are not clipped."""
+
+    def predict(self, frame: np.ndarray | str) -> list[ALPRResult]:
+        if isinstance(frame, str):
+            img_path = frame
+            img = cv2.imread(img_path)
+            if img is None:
+                raise ValueError(f"Failed to load image from path: {img_path}")
+        else:
+            img = frame
+
+        plate_detections = self.detector.predict(img)
+        alpr_results: list[ALPRResult] = []
+        for detection in plate_detections:
+            bbox = detection.bounding_box
+            tight_box = {
+                "x": int(max(bbox.x1, 0)),
+                "y": int(max(bbox.y1, 0)),
+                "w": int(max(0, bbox.x2 - bbox.x1)),
+                "h": int(max(0, bbox.y2 - bbox.y1)),
+            }
+            cropped_plate = crop_ocr_plate(img, tight_box)
+            if cropped_plate is None or cropped_plate.size == 0:
+                x1, y1 = tight_box["x"], tight_box["y"]
+                x2 = min(tight_box["x"] + tight_box["w"], img.shape[1])
+                y2 = min(tight_box["y"] + tight_box["h"], img.shape[0])
+                cropped_plate = img[y1:y2, x1:x2]
+            ocr_result = self.ocr.predict(cropped_plate)
+            alpr_results.append(ALPRResult(detection=detection, ocr=ocr_result))
+        return alpr_results
 
 
 def _build_alpr() -> ALPR:
@@ -350,15 +466,17 @@ def _build_alpr() -> ALPR:
         kwargs["detector_providers"] = providers
 
     logger.info(
-        "Initializing ALPR detector=%s conf=%.2f ocr=%s paddle_lang=%s langs=%s gpu=%s",
+        "Initializing ALPR detector=%s conf=%.2f ocr=%s paddle_langs=%s langs=%s gpu=%s ocr_pad_x=%s ocr_pad_y=%s",
         detector_model,
         detector_conf,
         plate_ocr_backend(),
         paddle_ocr_lang(),
         plate_ocr_langs(),
         gpu,
+        os.environ.get("PLATE_OCR_BOX_PAD_X", "0.22"),
+        os.environ.get("PLATE_OCR_BOX_PAD_Y", "0.15"),
     )
-    return ALPR(**kwargs)
+    return PaddedALPR(**kwargs)
 
 
 def get_alpr() -> ALPR | None:

@@ -24,7 +24,7 @@
         }
         .topbar h1 { font-size: 1.2rem; }
         .topbar nav a { color: #93c5fd; text-decoration: none; margin-left: 1rem; font-size: 0.9rem; }
-        main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.5rem; }
+        main { max-width: 1200px; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.5rem; }
         section {
             background: #fff;
             border-radius: 0.75rem;
@@ -34,13 +34,20 @@
         h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
         .muted { color: #6b7a88; font-size: 0.88rem; }
         table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid #eef2f6; }
+        th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid #eef2f6; vertical-align: top; }
         th { font-size: 0.75rem; text-transform: uppercase; color: #6b7a88; }
         .form-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 0.75rem;
             margin-top: 1rem;
+        }
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.65rem;
+            margin: 0.75rem 0 1rem;
+            align-items: end;
         }
         label { display: grid; gap: 0.3rem; font-size: 0.75rem; font-weight: 600; color: #4a5a68; text-transform: uppercase; }
         input, select {
@@ -50,7 +57,7 @@
             font-size: 0.9rem;
             font-family: inherit;
         }
-        .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+        .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; align-items: center; }
         button, .btn {
             border: none;
             border-radius: 0.5rem;
@@ -69,10 +76,55 @@
         .message.show { display: block; }
         .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
         .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
-        .badge { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+        .badge, .pill {
+            display: inline-block;
+            padding: 0.15rem 0.45rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
         .badge-on { background: #dcfce7; color: #166534; }
         .badge-off { background: #f3f4f6; color: #6b7280; }
+        .pill-entry { background: #dbeafe; color: #1e40af; }
+        .pill-exit { background: #ffedd5; color: #9a3412; }
+        .pill-registered { background: #dcfce7; color: #166534; }
+        .pill-guest { background: #fef9c3; color: #854d0e; }
+        .pill-unregistered { background: #fee2e2; color: #991b1b; }
+        .level-info { background: #e0f2fe; color: #0369a1; }
+        .level-warn { background: #fef3c7; color: #92400e; }
+        .level-error { background: #fee2e2; color: #991b1b; }
+        .level-debug { background: #f3f4f6; color: #4b5563; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
+        .tabs {
+            display: flex;
+            gap: 0.35rem;
+            flex-wrap: wrap;
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid #eef2f6;
+            padding-bottom: 0.75rem;
+        }
+        .tab-btn {
+            background: #e8edf2;
+            color: #1a2634;
+        }
+        .tab-btn.active { background: #1a2634; color: #fff; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .log-message { max-width: 320px; word-break: break-word; }
+        .toolbar-meta { color: #6b7a88; font-size: 0.85rem; margin-left: auto; }
+        .check-inline {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.82rem;
+            text-transform: none;
+            font-weight: 500;
+            color: #4a5a68;
+            padding-bottom: 0.55rem;
+        }
+        .check-inline input { width: auto; margin: 0; }
         #loginGate { text-align: center; padding: 3rem 1rem; }
+        .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid #dde3e9; }
     </style>
 </head>
 <body>
@@ -80,6 +132,7 @@
         <h1>Admin panel</h1>
         <nav>
             <a href="/">Monitor</a>
+            <a href="/vehicles">Vehicles</a>
             <a href="/submit">Register vehicle</a>
             <a href="/login">Login</a>
         </nav>
@@ -89,68 +142,213 @@
         <div id="message" class="message"></div>
 
         <section id="loginGate">
-            <p class="muted">Sign in as <strong>parking_admin</strong> or <strong>system_admin</strong> to manage cameras.</p>
+            <p class="muted">Sign in as <strong>parking_admin</strong> or <strong>system_admin</strong> to manage cameras and view logs.</p>
             <p style="margin-top:1rem;"><a href="/login">Go to login</a></p>
         </section>
 
-        <section id="camerasSection" style="display:none;">
-            <h2>Cameras</h2>
-            <p class="muted">Configure entry/exit cameras. Changes reload the camera worker automatically.</p>
-            <div id="workerStatus" class="muted" style="margin:0.5rem 0;"></div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Protocol</th>
-                        <th>Source</th>
-                        <th>Gate</th>
-                        <th>Light</th>
-                        <th>Detect (s)</th>
-                        <th>Status</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="camerasBody">
-                    <tr><td colspan="8" class="muted">Loading…</td></tr>
-                </tbody>
-            </table>
+        <section id="adminMain" style="display:none;">
+            <div class="tabs">
+                <button type="button" class="tab-btn active" data-tab="cameras">Cameras</button>
+                <button type="button" class="tab-btn" data-tab="vehicles">Vehicles</button>
+                <button type="button" class="tab-btn" data-tab="parkingLogs">Parking logs</button>
+                <button type="button" class="tab-btn" data-tab="softwareLogs">Software logs</button>
+                <button type="button" class="tab-btn" data-tab="settings">Settings</button>
+                <button type="button" class="tab-btn" data-tab="admins" id="adminsTabBtn" style="display:none;">Staff</button>
+            </div>
 
-            <h2 style="margin-top:1.5rem;" id="formTitle">Add camera</h2>
-            <form id="cameraForm" class="form-grid">
-                <input type="hidden" id="cameraId" value="">
-                <label>Name<input id="name" required placeholder="Entry gate"></label>
-                <label>Protocol
-                    <select id="protocol">
-                        <option value="rtsp">rtsp</option>
-                        <option value="http">http</option>
-                        <option value="usb">usb</option>
-                    </select>
-                </label>
-                <label>Source<input id="source" required placeholder="rtsp://… or 0 for USB"></label>
-                <label>Gate role
-                    <select id="gate_role">
-                        <option value="entry">entry</option>
-                        <option value="exit">exit</option>
-                    </select>
-                </label>
-                <label>Light profile
-                    <select id="light_profile">
-                        <option value="normal">normal</option>
-                        <option value="high_glare">high_glare</option>
-                        <option value="low_light">low_light</option>
-                    </select>
-                </label>
-                <label>Detection interval (s)<input id="frame_interval_seconds" type="number" min="0.5" step="0.1" placeholder="1.0" title="How often to run plate OCR — does not affect live preview FPS"></label>
-                <label>Enabled
-                    <select id="is_enabled">
-                        <option value="true">Yes</option>
-                        <option value="false">No</option>
-                    </select>
-                </label>
-            </form>
-            <div class="btn-row">
-                <button type="button" id="saveBtn">Save camera</button>
-                <button type="button" class="secondary" id="cancelEditBtn" style="display:none;">Cancel edit</button>
+            <div id="tabCameras" class="tab-panel active">
+                <h2>Cameras</h2>
+                <p class="muted">Configure entry/exit cameras. Changes reload the camera worker automatically.</p>
+                <div id="workerStatus" class="muted" style="margin:0.5rem 0;"></div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Protocol</th>
+                            <th>Source</th>
+                            <th>Gate</th>
+                            <th>Light</th>
+                            <th>Detect (s)</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="camerasBody">
+                        <tr><td colspan="8" class="muted">Loading…</td></tr>
+                    </tbody>
+                </table>
+
+                <h2 style="margin-top:1.5rem;" id="formTitle">Add camera</h2>
+                <form id="cameraForm" class="form-grid">
+                    <input type="hidden" id="cameraId" value="">
+                    <label>Name<input id="name" required placeholder="Entry gate"></label>
+                    <label>Protocol
+                        <select id="protocol">
+                            <option value="rtsp">rtsp</option>
+                            <option value="http">http</option>
+                            <option value="usb">usb</option>
+                        </select>
+                    </label>
+                    <label>Source<input id="source" required placeholder="rtsp://… or 0 for USB"></label>
+                    <label>Gate role
+                        <select id="gate_role">
+                            <option value="entry">entry</option>
+                            <option value="exit">exit</option>
+                        </select>
+                    </label>
+                    <label>Light profile
+                        <select id="light_profile">
+                            <option value="normal">normal</option>
+                            <option value="high_glare">high_glare</option>
+                            <option value="low_light">low_light</option>
+                        </select>
+                    </label>
+                    <label>Detection interval (s)<input id="frame_interval_seconds" type="number" min="0.5" step="0.1" placeholder="1.0" title="How often to run plate OCR — does not affect live preview FPS"></label>
+                    <label>Enabled
+                        <select id="is_enabled">
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </label>
+                </form>
+                <div class="btn-row">
+                    <button type="button" id="saveBtn">Save camera</button>
+                    <button type="button" class="secondary" id="cancelEditBtn" style="display:none;">Cancel edit</button>
+                </div>
+            </div>
+
+            <div id="tabParkingLogs" class="tab-panel">
+                <h2>Parking logs</h2>
+                <p class="muted">Entry/exit history with filters. Logs for soft-deleted vehicles are hidden by default.</p>
+                <div class="filter-grid">
+                    <label>Direction
+                        <select id="parkingDirection">
+                            <option value="">All</option>
+                            <option value="entry">Entry</option>
+                            <option value="exit">Exit</option>
+                        </select>
+                    </label>
+                    <label>Match status
+                        <select id="parkingMatch">
+                            <option value="">All</option>
+                            <option value="registered">Registered</option>
+                            <option value="unregistered">Unregistered</option>
+                        </select>
+                    </label>
+                    <label>Plate contains<input id="parkingPlate" placeholder="DXB1234"></label>
+                    <label>From<input id="parkingFrom" type="datetime-local"></label>
+                    <label>To<input id="parkingTo" type="datetime-local"></label>
+                    <label class="check-inline" id="includeDeletedWrap" style="display:none;">
+                        <input type="checkbox" id="includeDeleted"> Include soft-deleted vehicles
+                    </label>
+                    <button type="button" id="parkingFilterBtn">Apply filters</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Plate</th>
+                            <th>Direction</th>
+                            <th>Status</th>
+                            <th>Conf.</th>
+                            <th>Snapshot</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="parkingLogsBody">
+                        <tr><td colspan="6" class="muted">Loading…</td></tr>
+                    </tbody>
+                </table>
+                <div class="btn-row">
+                    <button type="button" class="secondary" id="parkingPrevBtn" disabled>Previous</button>
+                    <button type="button" class="secondary" id="parkingNextBtn" disabled>Next</button>
+                    <button type="button" class="secondary" id="parkingRefreshBtn">Refresh</button>
+                    <span class="toolbar-meta" id="parkingPageInfo">Page 1</span>
+                </div>
+            </div>
+
+            <div id="tabVehicles" class="tab-panel">
+                <h2>Registered vehicles</h2>
+                <p class="muted">Search allowed plates. <a href="/vehicles">Open full vehicles page</a> for remove actions.</p>
+                <div class="filter-grid">
+                    <label>Plate<input id="adminVehiclePlate" placeholder="DXB"></label>
+                    <label>Owner<input id="adminVehicleOwner" placeholder="Name"></label>
+                    <button type="button" id="adminVehicleSearchBtn">Search</button>
+                </div>
+                <table>
+                    <thead><tr><th>Plate</th><th>Owner</th><th>Type</th><th>Car</th></tr></thead>
+                    <tbody id="adminVehiclesBody"><tr><td colspan="4" class="muted">Use search.</td></tr></tbody>
+                </table>
+            </div>
+
+            <div id="tabSettings" class="tab-panel">
+                <h2>Runtime settings</h2>
+                <p class="muted">Stored in PostgreSQL. OCR confidence is hardcoded in code (0.45).</p>
+                <div id="settingsForm" class="form-grid"></div>
+                <div class="btn-row">
+                    <button type="button" id="settingsSaveBtn">Save settings</button>
+                </div>
+            </div>
+
+            <div id="tabAdmins" class="tab-panel">
+                <h2>Staff accounts</h2>
+                <p class="muted">system_admin only.</p>
+                <table>
+                    <thead><tr><th>Username</th><th>Role</th><th></th></tr></thead>
+                    <tbody id="adminsBody"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+                </table>
+                <h2 style="margin-top:1.5rem;">Add staff</h2>
+                <div class="form-grid">
+                    <label>Username<input id="newAdminUser"></label>
+                    <label>Password<input id="newAdminPass" type="password"></label>
+                    <label>Role
+                        <select id="newAdminRole">
+                            <option value="worker">worker</option>
+                            <option value="parking_admin">parking_admin</option>
+                            <option value="system_admin">system_admin</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="btn-row"><button type="button" id="createAdminBtn">Create account</button></div>
+            </div>
+
+            <div id="tabSoftwareLogs" class="tab-panel">
+                <h2>Software logs</h2>
+                <p class="muted">Technical audit trail — camera changes, errors, admin actions.</p>
+                <div class="filter-grid">
+                    <label>Level
+                        <select id="softwareLevel">
+                            <option value="">All</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARN">WARN</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="DEBUG">DEBUG</option>
+                        </select>
+                    </label>
+                    <label>Event contains<input id="softwareEvent" placeholder="camera.deleted"></label>
+                    <label>Module contains<input id="softwareModule" placeholder="app_routes"></label>
+                    <button type="button" id="softwareFilterBtn">Apply filters</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Level</th>
+                            <th>Event</th>
+                            <th>Module</th>
+                            <th>Message</th>
+                        </tr>
+                    </thead>
+                    <tbody id="softwareLogsBody">
+                        <tr><td colspan="5" class="muted">Loading…</td></tr>
+                    </tbody>
+                </table>
+                <div class="btn-row">
+                    <button type="button" class="secondary" id="softwarePrevBtn" disabled>Previous</button>
+                    <button type="button" class="secondary" id="softwareNextBtn" disabled>Next</button>
+                    <button type="button" class="secondary" id="softwareRefreshBtn">Refresh</button>
+                    <span class="toolbar-meta" id="softwarePageInfo">Page 1</span>
+                </div>
             </div>
         </section>
     </main>
@@ -158,12 +356,19 @@
     <script>
         const messageEl = document.getElementById("message");
         const loginGate = document.getElementById("loginGate");
-        const camerasSection = document.getElementById("camerasSection");
+        const adminMain = document.getElementById("adminMain");
         const camerasBody = document.getElementById("camerasBody");
         const workerStatus = document.getElementById("workerStatus");
         const cameraForm = document.getElementById("cameraForm");
         const formTitle = document.getElementById("formTitle");
         const cancelEditBtn = document.getElementById("cancelEditBtn");
+
+        const PARKING_PAGE_SIZE = 20;
+        const SOFTWARE_PAGE_SIZE = 50;
+        let currentUser = null;
+        let parkingPage = 1;
+        let softwarePage = 1;
+        let activeTab = "cameras";
 
         function authHeaders() {
             const token = localStorage.getItem("access_token");
@@ -179,24 +384,79 @@
             messageEl.className = "message";
         }
 
-        function resetForm() {
-            document.getElementById("cameraId").value = "";
-            cameraForm.reset();
-            document.getElementById("is_enabled").value = "true";
-            formTitle.textContent = "Add camera";
-            cancelEditBtn.style.display = "none";
+        function escapeHtml(s) {
+            return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+        }
+
+        function formatTime(iso) {
+            if (!iso) return "—";
+            try { return new Date(iso).toLocaleString(); } catch (_) { return iso; }
+        }
+
+        function directionPill(dir) {
+            if (dir === "exit") return "<span class='pill pill-exit'>Exit</span>";
+            return "<span class='pill pill-entry'>Entry</span>";
+        }
+
+        function statusPill(row) {
+            if (row.match_status === "registered" && row.is_guest) {
+                return "<span class='pill pill-guest'>Guest</span>";
+            }
+            if (row.match_status === "registered") {
+                return "<span class='pill pill-registered'>Registered</span>";
+            }
+            return "<span class='pill pill-unregistered'>Unregistered</span>";
+        }
+
+        function levelBadge(level) {
+            const lv = String(level || "").toUpperCase();
+            const cls = lv === "ERROR" ? "level-error" : lv === "WARN" ? "level-warn" : lv === "DEBUG" ? "level-debug" : "level-info";
+            return "<span class='badge " + cls + "'>" + escapeHtml(lv || "—") + "</span>";
+        }
+
+        function snapshotCell(row) {
+            if (!row.snapshot_url) return "—";
+            return "<a href='" + escapeHtml(row.snapshot_url) + "' target='_blank' rel='noopener'>" +
+                "<img class='thumb' src='" + escapeHtml(row.snapshot_url) + "' alt='' loading='lazy'></a>";
         }
 
         async function apiFetch(url, options = {}) {
             const res = await fetch(url, { credentials: "include", ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
             if (res.status === 401 || res.status === 403) {
                 loginGate.style.display = "block";
-                camerasSection.style.display = "none";
+                adminMain.style.display = "none";
                 throw new Error(res.status === 401 ? "Please log in." : "Admin access required.");
             }
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || data.error || "Request failed");
             return data;
+        }
+
+        function switchTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll(".tab-btn").forEach((btn) => {
+                btn.classList.toggle("active", btn.dataset.tab === tab);
+            });
+            document.querySelectorAll(".tab-panel").forEach((panel) => {
+                panel.classList.toggle("active", panel.id === "tab" + tab.charAt(0).toUpperCase() + tab.slice(1));
+            });
+            if (tab === "parkingLogs") loadParkingLogs(parkingPage).catch((err) => showMessage(err.message, "error"));
+            if (tab === "softwareLogs") loadSoftwareLogs(softwarePage).catch((err) => showMessage(err.message, "error"));
+            if (tab === "vehicles") loadAdminVehicles().catch((err) => showMessage(err.message, "error"));
+            if (tab === "settings") loadSettings().catch((err) => showMessage(err.message, "error"));
+            if (tab === "admins") loadAdmins().catch((err) => showMessage(err.message, "error"));
+        }
+
+        document.querySelectorAll(".tab-btn").forEach((btn) => {
+            btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+        });
+
+        function resetForm() {
+            document.getElementById("cameraId").value = "";
+            cameraForm.reset();
+            document.getElementById("is_enabled").value = "true";
+            formTitle.textContent = "Add camera";
+            cancelEditBtn.style.display = "none";
         }
 
         function renderCameras(cameras) {
@@ -221,10 +481,6 @@
             `).join("");
         }
 
-        function escapeHtml(s) {
-            return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-        }
-
         function renderWorkerStatus(status) {
             const w = (status && status.camera_worker) || {};
             workerStatus.textContent = w.running
@@ -241,6 +497,156 @@
             } catch (_) {
                 workerStatus.textContent = "Worker status unavailable (reload may be in progress).";
             }
+        }
+
+        function parkingQuery(page) {
+            const params = new URLSearchParams({
+                page: String(page),
+                page_size: String(PARKING_PAGE_SIZE),
+            });
+            const direction = document.getElementById("parkingDirection").value;
+            const match = document.getElementById("parkingMatch").value;
+            const plate = document.getElementById("parkingPlate").value.trim();
+            if (direction) params.set("direction", direction);
+            if (match) params.set("match_status", match);
+            if (plate) params.set("plate", plate);
+            const fromRaw = document.getElementById("parkingFrom").value;
+            const toRaw = document.getElementById("parkingTo").value;
+            if (fromRaw) params.set("from_date", new Date(fromRaw).toISOString());
+            if (toRaw) params.set("to_date", new Date(toRaw).toISOString());
+            if (document.getElementById("includeDeleted").checked) params.set("include_deleted", "true");
+            return "/api/parking-logs?" + params.toString();
+        }
+
+        async function loadAdminVehicles() {
+            const params = new URLSearchParams({ page_size: "30" });
+            const plate = document.getElementById("adminVehiclePlate").value.trim();
+            const owner = document.getElementById("adminVehicleOwner").value.trim();
+            if (plate) params.set("plate", plate);
+            if (owner) params.set("owner", owner);
+            const data = await apiFetch("/api/vehicles?" + params.toString());
+            const rows = data.vehicles || [];
+            const body = document.getElementById("adminVehiclesBody");
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="4" class="muted">No vehicles.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((v) => (
+                "<tr><td class='mono'>" + escapeHtml(v.plate_number || v.plate_normalized) + "</td>" +
+                "<td>" + escapeHtml([v.owner_name, v.owner_lastname].filter(Boolean).join(" ") || "—") + "</td>" +
+                "<td>" + (v.is_guest ? "Guest" : "Resident") + "</td>" +
+                "<td>" + escapeHtml(v.car_model || "—") + "</td></tr>"
+            )).join("");
+        }
+
+        async function loadSettings() {
+            const data = await apiFetch("/api/settings");
+            const form = document.getElementById("settingsForm");
+            const allowed = new Set(data.allowed_keys || []);
+            const byKey = {};
+            (data.settings || []).forEach((row) => { byKey[row.key] = row.value; });
+            const labels = {
+                CAMERA_FRAME_INTERVAL_SECONDS: "Scan interval (seconds)",
+                PARKING_LOG_COOLDOWN_SECONDS: "Log cooldown (seconds)",
+                light_profile_global: "Global light profile",
+            };
+            form.innerHTML = Array.from(allowed).map((key) => {
+                const val = byKey[key];
+                const inner = val && val.value != null ? val.value : "";
+                if (key === "light_profile_global") {
+                    return "<label>" + escapeHtml(labels[key] || key) +
+                        "<select data-setting-key='" + key + "'>" +
+                        ["normal","high_glare","low_light"].map((p) =>
+                            "<option value='" + p + "'" + (String(inner) === p ? " selected" : "") + ">" + p + "</option>"
+                        ).join("") + "</select></label>";
+                }
+                return "<label>" + escapeHtml(labels[key] || key) +
+                    "<input data-setting-key='" + key + "' value='" + escapeHtml(String(inner)) + "'></label>";
+            }).join("");
+        }
+
+        async function loadAdmins() {
+            const data = await apiFetch("/api/admins");
+            const rows = data.admins || [];
+            const body = document.getElementById("adminsBody");
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="3" class="muted">No staff accounts.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((a) => (
+                "<tr><td>" + escapeHtml(a.username) + "</td><td>" + escapeHtml(a.role) + "</td>" +
+                "<td><button type='button' class='small danger' data-del-admin='" + a.id + "'>Delete</button></td></tr>"
+            )).join("");
+        }
+
+        async function loadParkingLogs(page) {
+            parkingPage = page;
+            const body = document.getElementById("parkingLogsBody");
+            const pageInfo = document.getElementById("parkingPageInfo");
+            body.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
+            const data = await apiFetch(parkingQuery(page));
+            const rows = data.logs || [];
+            document.getElementById("parkingPrevBtn").disabled = !data.has_prev;
+            document.getElementById("parkingNextBtn").disabled = !data.has_next;
+            pageInfo.textContent = `Page ${data.page || page} · ${data.total ?? 0} total`;
+
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="6" class="muted">No parking logs match filters.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((r) => (
+                "<tr>" +
+                "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
+                "<td class='mono'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
+                "<td>" + directionPill(r.direction) + "</td>" +
+                "<td>" + statusPill(r) + "</td>" +
+                "<td>" + (r.confidence != null ? Number(r.confidence).toFixed(2) : "—") + "</td>" +
+                "<td>" + snapshotCell(r) + "</td>" +
+                "<td><button type='button' class='small danger' data-del-log='" + r.id + "'>Hide</button></td>" +
+                "</tr>"
+            )).join("");
+        }
+
+        function softwareQuery(page) {
+            const params = new URLSearchParams({
+                page: String(page),
+                page_size: String(SOFTWARE_PAGE_SIZE),
+            });
+            const level = document.getElementById("softwareLevel").value;
+            const event = document.getElementById("softwareEvent").value.trim();
+            const module = document.getElementById("softwareModule").value.trim();
+            if (level) params.set("level", level);
+            if (event) params.set("event", event);
+            if (module) params.set("module", module);
+            return "/api/software-logs?" + params.toString();
+        }
+
+        async function loadSoftwareLogs(page) {
+            softwarePage = page;
+            const body = document.getElementById("softwareLogsBody");
+            const pageInfo = document.getElementById("softwarePageInfo");
+            body.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
+            const data = await apiFetch(softwareQuery(page));
+            const rows = data.logs || [];
+            document.getElementById("softwarePrevBtn").disabled = !data.has_prev;
+            document.getElementById("softwareNextBtn").disabled = !data.has_next;
+            pageInfo.textContent = `Page ${data.page || page} · ${data.total ?? 0} total`;
+
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="5" class="muted">No software logs match filters.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((r) => (
+                "<tr>" +
+                "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
+                "<td>" + levelBadge(r.level) + "</td>" +
+                "<td class='mono'>" + escapeHtml(r.event || "—") + "</td>" +
+                "<td class='mono'>" + escapeHtml(r.module || "—") + "</td>" +
+                "<td class='log-message'>" + escapeHtml(r.message || "—") +
+                    (r.metadata_ || r.metadata ? "<br><span class='muted'>" + escapeHtml(r.metadata_ || r.metadata) + "</span>" : "") +
+                "</td>" +
+                "</tr>"
+            )).join("");
         }
 
         function upsertCameraRow(camera) {
@@ -298,6 +704,7 @@
                 document.getElementById("is_enabled").value = cam.is_enabled ? "true" : "false";
                 formTitle.textContent = "Edit camera";
                 cancelEditBtn.style.display = "inline-block";
+                switchTab("cameras");
                 return;
             }
             if (delId && confirm("Delete this camera?")) {
@@ -345,11 +752,111 @@
 
         cancelEditBtn.addEventListener("click", resetForm);
 
+        document.getElementById("parkingLogsBody").addEventListener("click", async (e) => {
+            const logId = e.target.getAttribute("data-del-log");
+            if (!logId || !confirm("Soft-delete this parking log row?")) return;
+            try {
+                await apiFetch("/api/parking-logs/" + logId, { method: "DELETE" });
+                showMessage("Log hidden.", "success");
+                await loadParkingLogs(parkingPage);
+            } catch (err) {
+                showMessage(err.message, "error");
+            }
+        });
+
+        document.getElementById("parkingFilterBtn").addEventListener("click", () => {
+            loadParkingLogs(1).catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("parkingRefreshBtn").addEventListener("click", () => {
+            loadParkingLogs(parkingPage).catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("parkingPrevBtn").addEventListener("click", () => {
+            if (parkingPage > 1) loadParkingLogs(parkingPage - 1).catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("parkingNextBtn").addEventListener("click", () => {
+            loadParkingLogs(parkingPage + 1).catch((err) => showMessage(err.message, "error"));
+        });
+
+        document.getElementById("softwareFilterBtn").addEventListener("click", () => {
+            loadSoftwareLogs(1).catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("softwareRefreshBtn").addEventListener("click", () => {
+            loadSoftwareLogs(softwarePage).catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("softwarePrevBtn").addEventListener("click", () => {
+            if (softwarePage > 1) loadSoftwareLogs(softwarePage - 1).catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("softwareNextBtn").addEventListener("click", () => {
+            loadSoftwareLogs(softwarePage + 1).catch((err) => showMessage(err.message, "error"));
+        });
+
+        document.getElementById("adminVehicleSearchBtn").addEventListener("click", () => {
+            loadAdminVehicles().catch((err) => showMessage(err.message, "error"));
+        });
+
+        document.getElementById("settingsSaveBtn").addEventListener("click", async () => {
+            clearMessage();
+            const inputs = document.querySelectorAll("[data-setting-key]");
+            try {
+                for (const el of inputs) {
+                    const key = el.getAttribute("data-setting-key");
+                    const value = el.value;
+                    await apiFetch("/api/settings/" + key, {
+                        method: "PATCH",
+                        body: JSON.stringify({ value: { value: value } }),
+                    });
+                }
+                showMessage("Settings saved.", "success");
+            } catch (err) {
+                showMessage(err.message, "error");
+            }
+        });
+
+        document.getElementById("createAdminBtn").addEventListener("click", async () => {
+            clearMessage();
+            try {
+                await apiFetch("/api/admins", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        username: document.getElementById("newAdminUser").value.trim(),
+                        password: document.getElementById("newAdminPass").value,
+                        role: document.getElementById("newAdminRole").value,
+                    }),
+                });
+                document.getElementById("newAdminUser").value = "";
+                document.getElementById("newAdminPass").value = "";
+                showMessage("Staff account created.", "success");
+                await loadAdmins();
+            } catch (err) {
+                showMessage(err.message, "error");
+            }
+        });
+
+        document.getElementById("adminsBody").addEventListener("click", async (e) => {
+            const id = e.target.getAttribute("data-del-admin");
+            if (!id || !confirm("Delete this staff account?")) return;
+            try {
+                await apiFetch("/api/admins/" + id, { method: "DELETE" });
+                showMessage("Account deleted.", "success");
+                await loadAdmins();
+            } catch (err) {
+                showMessage(err.message, "error");
+            }
+        });
+
         (async function init() {
             if (!localStorage.getItem("access_token")) return;
             try {
+                const me = await fetch("/auth/me", { credentials: "include", headers: authHeaders() });
+                if (me.ok) {
+                    currentUser = await me.json();
+                    if (currentUser && currentUser.role === "system_admin") {
+                        document.getElementById("includeDeletedWrap").style.display = "flex";
+                        document.getElementById("adminsTabBtn").style.display = "inline-block";
+                    }
+                }
                 loginGate.style.display = "none";
-                camerasSection.style.display = "block";
+                adminMain.style.display = "block";
                 await loadCameras();
             } catch (err) {
                 showMessage(err.message, "error");

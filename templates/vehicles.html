@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vehicles | Parking ANPR</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; min-height: 100vh; color: #1a2634; }
+        .topbar { background: #1a2634; color: #fff; padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+        .topbar h1 { font-size: 1.2rem; }
+        .topbar nav a { color: #93c5fd; text-decoration: none; margin-left: 1rem; font-size: 0.9rem; }
+        main { max-width: 1000px; margin: 0 auto; padding: 1.5rem; }
+        section { background: #fff; border-radius: 0.75rem; box-shadow: 0 4px 16px rgba(0,0,0,0.04); padding: 1.25rem 1.5rem; }
+        h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
+        .muted { color: #6b7a88; font-size: 0.88rem; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 1rem; }
+        th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid #eef2f6; }
+        th { font-size: 0.75rem; text-transform: uppercase; color: #6b7a88; }
+        .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.65rem; align-items: end; margin: 1rem 0; }
+        label { display: grid; gap: 0.3rem; font-size: 0.75rem; font-weight: 600; color: #4a5a68; text-transform: uppercase; }
+        input, select { padding: 0.55rem 0.65rem; border: 1px solid #dde3e9; border-radius: 0.45rem; font-size: 0.9rem; }
+        button { border: none; border-radius: 0.5rem; background: #1a2634; color: #fff; font-weight: 600; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.85rem; }
+        button.secondary { background: #e8edf2; color: #1a2634; }
+        button.danger { background: #b91c1c; }
+        button.small { padding: 0.35rem 0.6rem; font-size: 0.78rem; }
+        .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; align-items: center; }
+        .message { display: none; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.88rem; margin-bottom: 1rem; }
+        .message.show { display: block; }
+        .message.error { background: #fef2f2; color: #991b1b; }
+        .message.success { background: #ecfdf5; color: #065f46; }
+        .badge { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+        .badge-guest { background: #fef9c3; color: #854d0e; }
+        .badge-resident { background: #dcfce7; color: #166534; }
+        .mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <h1>Registered vehicles</h1>
+        <nav>
+            <a href="/">Monitor</a>
+            <a href="/submit">Register</a>
+            <a href="/admin">Admin</a>
+            <a href="/login">Login</a>
+        </nav>
+    </header>
+    <main>
+        <div id="message" class="message"></div>
+        <section>
+            <h2>Search & remove</h2>
+            <p class="muted">Soft-delete removes a vehicle from the allowed list. Parking logs for that plate are hidden by default.</p>
+            <div class="filters">
+                <label>Plate contains<input id="plateFilter" placeholder="DXB1234"></label>
+                <label>Owner name<input id="ownerFilter" placeholder="Last name"></label>
+                <label>Type
+                    <select id="guestFilter">
+                        <option value="">All</option>
+                        <option value="false">Resident</option>
+                        <option value="true">Guest</option>
+                    </select>
+                </label>
+                <button type="button" id="searchBtn">Search</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Plate</th>
+                        <th>Owner</th>
+                        <th>Type</th>
+                        <th>Car</th>
+                        <th>Unit / floor</th>
+                        <th>Photo</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="vehiclesBody"><tr><td colspan="7" class="muted">Log in and search.</td></tr></tbody>
+            </table>
+            <div class="btn-row">
+                <button type="button" class="secondary" id="prevBtn" disabled>Previous</button>
+                <button type="button" class="secondary" id="nextBtn" disabled>Next</button>
+                <span class="muted" id="pageInfo"></span>
+            </div>
+        </section>
+    </main>
+    <script>
+        let page = 1;
+        const pageSize = 25;
+        const messageEl = document.getElementById("message");
+        const body = document.getElementById("vehiclesBody");
+
+        function authHeaders() {
+            const h = { Accept: "application/json" };
+            const t = localStorage.getItem("access_token");
+            if (t) h.Authorization = "Bearer " + t;
+            return h;
+        }
+
+        function showMessage(text, type) {
+            messageEl.textContent = text;
+            messageEl.className = "message show " + type;
+        }
+
+        function escapeHtml(s) {
+            return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        }
+
+        function queryUrl(p) {
+            const params = new URLSearchParams({ page: String(p), page_size: String(pageSize) });
+            const plate = document.getElementById("plateFilter").value.trim();
+            const owner = document.getElementById("ownerFilter").value.trim();
+            const guest = document.getElementById("guestFilter").value;
+            if (plate) params.set("plate", plate);
+            if (owner) params.set("owner", owner);
+            if (guest !== "") params.set("is_guest", guest);
+            return "/api/vehicles?" + params.toString();
+        }
+
+        async function loadVehicles(p) {
+            page = p;
+            body.innerHTML = '<tr><td colspan="7" class="muted">Loading…</td></tr>';
+            const res = await fetch(queryUrl(p), { credentials: "include", headers: authHeaders() });
+            if (res.status === 401) {
+                body.innerHTML = '<tr><td colspan="7" class="muted">Please <a href="/login">log in</a>.</td></tr>';
+                return;
+            }
+            const data = await res.json();
+            if (!res.ok) {
+                showMessage(data.message || "Failed to load vehicles", "error");
+                return;
+            }
+            document.getElementById("prevBtn").disabled = !data.has_prev;
+            document.getElementById("nextBtn").disabled = !data.has_next;
+            document.getElementById("pageInfo").textContent = `Page ${data.page} · ${data.total} total`;
+            const rows = data.vehicles || [];
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="7" class="muted">No vehicles found.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((v) => {
+                const owner = [v.owner_name, v.owner_lastname].filter(Boolean).join(" ") || "—";
+                const type = v.is_guest
+                    ? "<span class='badge badge-guest'>Guest</span>"
+                    : "<span class='badge badge-resident'>Resident</span>";
+                const unit = [v.door_number, v.floor_number].filter(Boolean).join(" / ") || "—";
+                const photo = v.reference_image_url
+                    ? "<a href='" + escapeHtml(v.reference_image_url) + "' target='_blank' rel='noopener'>View</a>"
+                    : "—";
+                return "<tr>" +
+                    "<td class='mono'>" + escapeHtml(v.plate_number || v.plate_normalized) + "</td>" +
+                    "<td>" + escapeHtml(owner) + "</td>" +
+                    "<td>" + type + "</td>" +
+                    "<td>" + escapeHtml(v.car_model || "—") + "</td>" +
+                    "<td>" + escapeHtml(unit) + "</td>" +
+                    "<td>" + photo + "</td>" +
+                    "<td><button type='button' class='small danger' data-remove-id='" + v.id + "' data-plate='" + escapeHtml(v.plate_normalized) + "'>Remove</button></td>" +
+                    "</tr>";
+            }).join("");
+        }
+
+        body.addEventListener("click", async (e) => {
+            const id = e.target.getAttribute("data-remove-id");
+            if (!id) return;
+            const plate = e.target.getAttribute("data-plate");
+            if (!confirm("Soft-delete vehicle " + plate + "?")) return;
+            const res = await fetch("/api/remove-vehicle", {
+                method: "POST",
+                credentials: "include",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ vehicle_id: parseInt(id, 10) }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                showMessage(data.message || "Remove failed", "error");
+                return;
+            }
+            showMessage("Vehicle removed.", "success");
+            loadVehicles(page);
+        });
+
+        document.getElementById("searchBtn").addEventListener("click", () => loadVehicles(1));
+        document.getElementById("prevBtn").addEventListener("click", () => { if (page > 1) loadVehicles(page - 1); });
+        document.getElementById("nextBtn").addEventListener("click", () => loadVehicles(page + 1));
+
+        if (localStorage.getItem("access_token")) loadVehicles(1);
+    </script>
+</body>
+</html>

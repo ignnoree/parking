@@ -7,8 +7,22 @@ from flask import Blueprint, Response, abort, jsonify, request, send_file
 from flask_jwt_extended import jwt_required
 
 from database.db import reset_db
-from database.logs_db import count_parking_logs, list_parking_logs, log_software_event
-from database.vehicles_db import list_vehicles, soft_delete_vehicle, find_vehicle_by_normalized, insert_vehicle
+from database.logs_db import (
+    count_parking_logs,
+    count_software_logs,
+    list_parking_logs,
+    list_software_logs,
+    log_software_event,
+    soft_delete_parking_log,
+)
+from database.vehicles_db import (
+    count_vehicles,
+    find_vehicle_by_normalized,
+    insert_vehicle,
+    list_vehicles,
+    soft_delete_vehicle,
+)
+from helpers.enroll_images import save_reference_image
 from database.cameras_db import (
     VALID_GATE_ROLES,
     VALID_LIGHT_PROFILES,
@@ -22,8 +36,18 @@ from database.cameras_db import (
     update_camera,
 )
 from database.settings_db import BOOTSTRAP_KEYS, get_setting, list_settings, set_setting
-from database.admin_db import ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN, ROLE_WORKER
-from helpers.rbac import require_admin_roles
+from database.admin_db import (
+    ROLE_SYSTEM_ADMIN,
+    ROLE_PARKING_ADMIN,
+    ROLE_WORKER,
+    VALID_ROLES,
+    delete_admin_by_id,
+    get_admin_by_id,
+    insert_admin,
+    list_admins,
+    update_admin,
+)
+from helpers.rbac import get_current_admin, require_admin_roles
 from helpers.plate_normalize import normalize_plate
 from helpers.live_frame_buffer import get_frame_sequence, get_stream_status, wait_for_new_jpeg
 from helpers.utils import UPLOAD_FOLDER, COLLECTION_FOLDER
@@ -35,9 +59,12 @@ app_bp = Blueprint("app_routes", __name__)
 def _snapshot_path(rel: str | None) -> str | None:
     if not rel:
         return None
-    root = os.path.abspath(UPLOAD_FOLDER)
+    allowed_roots = [
+        os.path.abspath(UPLOAD_FOLDER),
+        os.path.abspath(COLLECTION_FOLDER),
+    ]
     path = os.path.normpath(os.path.join(os.getcwd(), rel.replace("/", os.sep)))
-    if not path.startswith(root):
+    if not any(path.startswith(root) for root in allowed_roots):
         return None
     return path if os.path.isfile(path) else None
 
@@ -83,6 +110,12 @@ def login_page():
 @app_bp.get("/submit")
 def submit_page():
     with open("templates/submit_ui.html", encoding="utf-8") as f:
+        return f.read()
+
+
+@app_bp.get("/vehicles")
+def vehicles_page():
+    with open("templates/vehicles.html", encoding="utf-8") as f:
         return f.read()
 
 
@@ -215,7 +248,131 @@ def settings_update_api(key: str):
     if not isinstance(payload, dict):
         payload = {"value": payload}
     set_setting(key, payload)
+    if key == "CAMERA_FRAME_INTERVAL_SECONDS":
+        reload_cameras()
     return jsonify({"status": "ok", "setting": {"key": key, "value": get_setting(key)}})
+
+
+@app_bp.get("/api/software-logs")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def software_logs_api():
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.args.get("page_size", 50) or 50)))
+    offset = (page - 1) * page_size
+    filters = {
+        "level": request.args.get("level"),
+        "event": request.args.get("event"),
+        "module": request.args.get("module"),
+    }
+    active = {k: v for k, v in filters.items() if v}
+    total = count_software_logs(**active)
+    logs = list_software_logs(limit=page_size, offset=offset, **active)
+    return jsonify(
+        {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_next": offset + page_size < total,
+            "has_prev": page > 1,
+            "logs": logs,
+        }
+    )
+
+
+@app_bp.get("/api/admins")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN)
+def admins_list_api():
+    return jsonify({"admins": list_admins()})
+
+
+@app_bp.post("/api/admins")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN)
+def admins_create_api():
+    data = request.get_json() or {}
+    username = str(data.get("username") or "").strip()
+    password = str(data.get("password") or "")
+    role = str(data.get("role") or ROLE_WORKER).strip().lower()
+    if not username or not password:
+        return jsonify({"status": "error", "message": "username and password required"}), 400
+    if role not in VALID_ROLES:
+        return jsonify({"status": "error", "message": f"role must be one of {VALID_ROLES}"}), 400
+    admin_id = insert_admin(username, password, role)
+    if admin_id is None:
+        return jsonify({"status": "error", "message": "Username already exists or invalid role"}), 409
+    row = get_admin_by_id(admin_id)
+    if row:
+        row.pop("password_hash", None)
+        row.pop("refresh_jti", None)
+    log_software_event(
+        level="INFO",
+        event="admin.created",
+        module="app_routes",
+        message=f"Admin account created id={admin_id}",
+        metadata=f"username={username!r} role={role!r}",
+    )
+    return jsonify({"status": "ok", "admin": row}), 201
+
+
+@app_bp.patch("/api/admins/<int:admin_id>")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN)
+def admins_update_api(admin_id: int):
+    data = request.get_json() or {}
+    if not data:
+        return jsonify({"status": "error", "message": "No fields to update"}), 400
+    existing = get_admin_by_id(admin_id)
+    if not existing:
+        return jsonify({"status": "error", "message": "Admin not found"}), 404
+    role = data.get("role")
+    if role is not None:
+        role = str(role).strip().lower()
+    password = data.get("password")
+    if password is not None:
+        password = str(password)
+        if not password:
+            return jsonify({"status": "error", "message": "password cannot be empty"}), 400
+    if not update_admin(admin_id, role=role, password_plain=password):
+        return jsonify({"status": "error", "message": "Invalid update"}), 400
+    row = get_admin_by_id(admin_id)
+    if row:
+        row.pop("password_hash", None)
+        row.pop("refresh_jti", None)
+    log_software_event(
+        level="INFO",
+        event="admin.updated",
+        module="app_routes",
+        message=f"Admin account updated id={admin_id}",
+    )
+    return jsonify({"status": "ok", "admin": row})
+
+
+@app_bp.delete("/api/admins/<int:admin_id>")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN)
+def admins_delete_api(admin_id: int):
+    current = get_current_admin()
+    if current and int(current["id"]) == admin_id:
+        return jsonify({"status": "error", "message": "Cannot delete your own account"}), 400
+    existing = get_admin_by_id(admin_id)
+    if not existing:
+        return jsonify({"status": "error", "message": "Admin not found"}), 404
+    if existing.get("role") == ROLE_SYSTEM_ADMIN:
+        others = [a for a in list_admins() if a.get("role") == ROLE_SYSTEM_ADMIN and a["id"] != admin_id]
+        if not others:
+            return jsonify({"status": "error", "message": "Cannot delete the last system_admin"}), 400
+    if not delete_admin_by_id(admin_id):
+        return jsonify({"status": "error", "message": "Admin not found"}), 404
+    log_software_event(
+        level="WARN",
+        event="admin.deleted",
+        module="app_routes",
+        message=f"Admin account deleted id={admin_id}",
+        metadata=f"username={existing.get('username')!r}",
+    )
+    return jsonify({"status": "ok"})
 
 
 @app_bp.get("/api/live/stream")
@@ -256,9 +413,27 @@ def parking_logs_api():
         "direction": request.args.get("direction"),
         "match_status": request.args.get("match_status"),
         "plate": request.args.get("plate"),
+        "from_date": request.args.get("from_date") or request.args.get("from"),
+        "to_date": request.args.get("to_date") or request.args.get("to"),
     }
-    total = count_parking_logs(**{k: v for k, v in filters.items() if v})
-    logs = list_parking_logs(limit=page_size, offset=offset, **{k: v for k, v in filters.items() if v})
+    active = {k: v for k, v in filters.items() if v}
+    include_deleted = request.args.get("include_deleted", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if include_deleted:
+        admin = get_current_admin()
+        if not admin or admin.get("role") != ROLE_SYSTEM_ADMIN:
+            return jsonify({"status": "error", "message": "include_deleted requires system_admin"}), 403
+    total = count_parking_logs(include_deleted_vehicles=include_deleted, **active)
+    logs = list_parking_logs(
+        limit=page_size,
+        offset=offset,
+        include_deleted_vehicles=include_deleted,
+        **active,
+    )
     for row in logs:
         snap = row.get("snapshot_path")
         row["snapshot_url"] = f"/api/parking-snapshot?path={quote(str(snap))}" if snap else None
@@ -286,6 +461,21 @@ def parking_logs_api():
     )
 
 
+@app_bp.delete("/api/parking-logs/<int:log_id>")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def parking_log_soft_delete_api(log_id: int):
+    if not soft_delete_parking_log(log_id):
+        return jsonify({"status": "error", "message": "Parking log not found"}), 404
+    log_software_event(
+        level="INFO",
+        event="parking_log.soft_deleted",
+        module="app_routes",
+        message=f"Parking log soft-deleted id={log_id}",
+    )
+    return jsonify({"status": "ok"})
+
+
 @app_bp.get("/api/parking-snapshot")
 @jwt_required()
 def parking_snapshot():
@@ -298,25 +488,93 @@ def parking_snapshot():
 @app_bp.get("/api/vehicles")
 @jwt_required()
 def vehicles_api():
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.args.get("page_size", 50) or 50)))
+    offset = (page - 1) * page_size
+    is_guest_raw = request.args.get("is_guest")
+    is_guest = None
+    if is_guest_raw is not None and str(is_guest_raw).strip() != "":
+        is_guest = str(is_guest_raw).strip().lower() in {"1", "true", "yes", "on"}
+    filters = {
+        "plate": request.args.get("plate"),
+        "owner": request.args.get("owner"),
+        "is_guest": is_guest,
+    }
+    active = {k: v for k, v in filters.items() if v is not None and v != ""}
+    total = count_vehicles(**active)
+    vehicles = list_vehicles(limit=page_size, offset=offset, **active)
+    for row in vehicles:
+        ref = row.get("reference_image_path")
+        row["reference_image_url"] = (
+            f"/api/parking-snapshot?path={quote(str(ref))}" if ref else None
+        )
     return jsonify(
         {
-            "vehicles": list_vehicles(
-                plate=request.args.get("plate"),
-                limit=min(200, int(request.args.get("limit", 100) or 100)),
-            )
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_next": offset + page_size < total,
+            "has_prev": page > 1,
+            "vehicles": vehicles,
         }
     )
+
+
+def _parse_enroll_payload():
+    import datetime
+
+    if request.content_type and "multipart/form-data" in request.content_type:
+        form = request.form
+        data = {k: form.get(k) for k in form.keys()}
+        is_guest = str(data.get("is_guest", "")).strip().lower() in {"1", "true", "yes", "on"}
+        ref_file = request.files.get("reference_image")
+    else:
+        data = request.get_json(silent=True) or {}
+        is_guest = bool(data.get("is_guest"))
+        ref_file = None
+    plate = data.get("plate_number")
+    if not plate:
+        return None, None, (jsonify({"status": "error", "message": "plate_number required"}), 400)
+    guest_expires_at = data.get("guest_expires_at")
+    if is_guest and not guest_expires_at:
+        return None, None, (
+            jsonify({"status": "error", "message": "guest_expires_at required for guest"}),
+            400,
+        )
+    exp_dt = None
+    if guest_expires_at:
+        exp_dt = datetime.datetime.fromisoformat(str(guest_expires_at).replace("Z", "+00:00"))
+    meta = data.get("metadata")
+    if isinstance(meta, str) and meta.strip():
+        try:
+            meta = json.loads(meta)
+        except json.JSONDecodeError:
+            meta = None
+    payload = {
+        "plate_number": str(plate).strip(),
+        "owner_name": data.get("owner_name") or None,
+        "owner_lastname": data.get("owner_lastname") or None,
+        "car_model": data.get("car_model") or None,
+        "door_number": data.get("door_number") or None,
+        "floor_number": data.get("floor_number") or None,
+        "parking_spot": data.get("parking_spot") or None,
+        "plate_color": data.get("plate_color") or "default",
+        "vehicle_class": data.get("vehicle_class") or "car",
+        "is_guest": is_guest,
+        "guest_expires_at": exp_dt,
+        "metadata": meta if isinstance(meta, dict) else None,
+        "reference_file": ref_file,
+    }
+    return payload, normalize_plate(str(plate)), None
 
 
 @app_bp.post("/api/enroll")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN, ROLE_WORKER)
 def enroll_vehicle():
-    data = request.get_json() or {}
-    plate = data.get("plate_number")
-    if not plate:
-        return jsonify({"status": "error", "message": "plate_number required"}), 400
-    norm = normalize_plate(plate)
+    payload, norm, err = _parse_enroll_payload()
+    if err:
+        return err
     existing = find_vehicle_by_normalized(norm)
     if existing:
         return jsonify(
@@ -327,34 +585,29 @@ def enroll_vehicle():
                 "plate_number_normalized": norm,
             }
         )
-    is_guest = bool(data.get("is_guest"))
-    guest_expires_at = data.get("guest_expires_at")
-    if is_guest and not guest_expires_at:
-        return jsonify({"status": "error", "message": "guest_expires_at required for guest"}), 400
-    import datetime
-
-    exp_dt = None
-    if guest_expires_at:
-        exp_dt = datetime.datetime.fromisoformat(str(guest_expires_at).replace("Z", "+00:00"))
-    created = insert_vehicle(
-        plate_number=plate,
-        owner_name=data.get("owner_name"),
-        owner_lastname=data.get("owner_lastname"),
-        car_model=data.get("car_model"),
-        door_number=data.get("door_number"),
-        floor_number=data.get("floor_number"),
-        parking_spot=data.get("parking_spot"),
-        plate_color=data.get("plate_color") or "default",
-        vehicle_class=data.get("vehicle_class") or "car",
-        is_guest=is_guest,
-        guest_expires_at=exp_dt,
-        metadata=data.get("metadata"),
-    )
+    ref_path = None
+    ref_file = payload.pop("reference_file", None)
+    if ref_file:
+        ref_path = save_reference_image(norm, ref_file)
+    created = insert_vehicle(reference_image_path=ref_path, **payload)
     if not created:
         return jsonify({"status": "error", "message": "Could not enroll vehicle"}), 400
     vid, normalized = created
+    log_software_event(
+        level="INFO",
+        event="vehicle.enrolled",
+        module="app_routes",
+        message=f"Vehicle enrolled id={vid}",
+        metadata=f"plate={normalized!r} guest={payload['is_guest']}",
+    )
     return jsonify(
-        {"status": "ok", "duplicate": False, "vehicle_id": vid, "plate_number_normalized": normalized}
+        {
+            "status": "ok",
+            "duplicate": False,
+            "vehicle_id": vid,
+            "plate_number_normalized": normalized,
+            "reference_image_path": ref_path,
+        }
     )
 
 
@@ -366,6 +619,13 @@ def remove_vehicle():
     ok = soft_delete_vehicle(vehicle_id=data.get("vehicle_id"), plate_number=data.get("plate_number"))
     if not ok:
         return jsonify({"status": "error", "message": "Vehicle not found"}), 404
+    log_software_event(
+        level="INFO",
+        event="vehicle.soft_deleted",
+        module="app_routes",
+        message="Vehicle soft-deleted",
+        metadata=str(data),
+    )
     return jsonify({"status": "ok"})
 
 

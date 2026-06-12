@@ -20,6 +20,58 @@ def _pad_y_down() -> float:
     return max(0.0, min(2.0, float(os.environ.get("PLATE_CROP_PAD_Y_DOWN", "0.35"))))
 
 
+def _ocr_pad_x() -> float:
+    """Horizontal padding on each side of the tight detector box for OCR."""
+    return max(0.0, min(1.5, float(os.environ.get("PLATE_OCR_BOX_PAD_X", "0.22"))))
+
+
+def _ocr_pad_y() -> float:
+    """Vertical padding on top/bottom of the tight detector box for OCR."""
+    return max(0.0, min(1.0, float(os.environ.get("PLATE_OCR_BOX_PAD_Y", "0.15"))))
+
+
+def expand_ocr_plate_box(
+    box: dict | None,
+    frame_width: int,
+    frame_height: int,
+) -> dict | None:
+    """Widen the tight YOLO plate box before OCR so edge characters are not clipped."""
+    if not box:
+        return None
+
+    x = int(box.get("x", 0))
+    y = int(box.get("y", 0))
+    w = max(1, int(box.get("w", 0)))
+    h = max(1, int(box.get("h", 0)))
+
+    pad_x = _ocr_pad_x()
+    pad_y = _ocr_pad_y()
+
+    x1 = max(0, int(x - w * pad_x))
+    x2 = min(frame_width, int(x + w + w * pad_x))
+    y1 = max(0, int(y - h * pad_y))
+    y2 = min(frame_height, int(y + h + h * pad_y))
+
+    return {"x": x1, "y": y1, "w": max(1, x2 - x1), "h": max(1, y2 - y1)}
+
+
+def crop_ocr_plate(frame_bgr: np.ndarray, tight_box: dict | None) -> np.ndarray | None:
+    """Crop plate region with OCR padding applied (no snapshot crop expansion)."""
+    if frame_bgr is None or frame_bgr.size == 0 or not tight_box:
+        return None
+    fh, fw = frame_bgr.shape[:2]
+    expanded = expand_ocr_plate_box(tight_box, fw, fh)
+    if not expanded:
+        return None
+    x1 = int(expanded["x"])
+    y1 = int(expanded["y"])
+    x2 = min(fw, x1 + int(expanded["w"]))
+    y2 = min(fh, y1 + int(expanded["h"]))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return frame_bgr[y1:y2, x1:x2].copy()
+
+
 def expand_plate_box(
     box: dict | None,
     frame_width: int,

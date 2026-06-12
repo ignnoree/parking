@@ -63,7 +63,9 @@ def source_in_use(protocol: str, source: str, *, exclude_id: int | None = None) 
 
 
 def default_frame_interval() -> float:
-    return max(0.5, float(os.environ.get("CAMERA_FRAME_INTERVAL_SECONDS", "1.0")))
+    from helpers.runtime_settings import camera_frame_interval_seconds
+
+    return camera_frame_interval_seconds()
 
 
 def list_cameras(*, enabled_only: bool = False) -> list[dict]:

@@ -24,8 +24,15 @@ from helpers.live_frame_buffer import (
     set_camera_disconnected,
     update_overlay_from_plate_results,
 )
-from helpers.plate_detect_isolated import detect_frame_isolated, is_busy
-from helpers.utils import UPLOAD_FOLDER
+from helpers.plate_detect_isolated import (
+    detect_frame_isolated,
+    is_busy,
+    wait_until_idle,
+    worker_status,
+)
+from helpers.plate_detect_retries import detect_with_retries
+from helpers.light_profile import resolve_light_profile
+from helpers.utils import UPLOAD_TEMP_FOLDER
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +65,9 @@ class _WorkerRuntime:
         self.drainer_threads: list[threading.Thread] = []
         self.preview_thread: threading.Thread | None = None
         self.detect_thread: threading.Thread | None = None
-        self.detect_queue: queue.Queue[_DetectJob | None] = queue.Queue(maxsize=1)
+        self.detect_queue: queue.Queue[_DetectJob | None] = queue.Queue(
+            maxsize=camera_detect_queue_size()
+        )
 
     def alive(self) -> bool:
         return any(t.is_alive() for t in self.drainer_threads)
@@ -93,6 +102,10 @@ def live_stream_max_fps() -> float:
 
 def _buffer_drain_reads() -> int:
     return max(1, int(os.environ.get("CAMERA_BUFFER_DRAIN", "3")))
+
+
+def camera_detect_queue_size() -> int:
+    return max(1, min(16, int(os.environ.get("CAMERA_DETECT_QUEUE_SIZE", "4"))))
 
 
 def _open_capture(source: int | str) -> cv2.VideoCapture:
@@ -208,7 +221,7 @@ def _warn_env_camera_url_mismatch() -> None:
 
 
 def _run_plate_detect_on_frame(job: _DetectJob) -> None:
-    path = os.path.join(UPLOAD_FOLDER, f"camera_{job.camera_id}_{uuid.uuid4().hex}.jpg")
+    path = os.path.join(UPLOAD_TEMP_FOLDER, f"camera_{job.camera_id}_{uuid.uuid4().hex}.jpg")
     if not cv2.imwrite(path, job.frame):
         log_software_event(
             level="WARN",
@@ -219,10 +232,12 @@ def _run_plate_detect_on_frame(job: _DetectJob) -> None:
         )
         return
 
-    result = detect_frame_isolated(
+    profile = resolve_light_profile(job.light_profile)
+    result = detect_with_retries(
+        detect_frame_isolated,
         path,
         direction=job.direction,
-        light_profile=job.light_profile,
+        light_profile=profile,
         frame_shape=job.frame.shape[:2],
     )
     if result and _runtime and job.camera_id == _runtime.primary_camera_id:
@@ -230,14 +245,16 @@ def _run_plate_detect_on_frame(job: _DetectJob) -> None:
 
 
 def _enqueue_detect(job: _DetectJob, detect_queue: queue.Queue[_DetectJob | None]) -> None:
-    """Skip if OCR child is still busy — preview must not wait for plates."""
-    if is_busy():
+    """Queue scan frames; drop oldest when full so crowded scenes are not skipped entirely."""
+    try:
+        detect_queue.put_nowait(job)
         return
-    while True:
-        try:
-            detect_queue.get_nowait()
-        except queue.Empty:
-            break
+    except queue.Full:
+        pass
+    try:
+        detect_queue.get_nowait()
+    except queue.Empty:
+        return
     try:
         detect_queue.put_nowait(job)
     except queue.Full:
@@ -312,7 +329,19 @@ def _drainer_loop(
                 continue
             fail_streak = 0
             next_frame_at = time.monotonic()
-            logger.info("Camera opened: id=%s name=%r source=%r", config.id, config.name, config.source)
+            logger.info(
+                "Camera opened: id=%s name=%r source=%r scan_interval=%.1fs",
+                config.id,
+                config.name,
+                config.source,
+                config.frame_interval_seconds,
+            )
+            ocr = worker_status()
+            if ocr.get("alive"):
+                logger.info(
+                    "Plate OCR worker ready (pid=%s); models load once — not re-initialized on video change",
+                    ocr.get("pid"),
+                )
 
         ok, frame = _read_drainer_burst(cap, config.network)
         if not ok or frame is None:
@@ -385,8 +414,12 @@ def _stop_runtime(runtime: _WorkerRuntime) -> None:
         thread.join(timeout=2.0)
     if runtime.preview_thread:
         runtime.preview_thread.join(timeout=2.0)
+    if not wait_until_idle(timeout=90.0):
+        logger.warning("Plate OCR still busy during camera reload; waiting for detect thread")
     if runtime.detect_thread:
-        runtime.detect_thread.join(timeout=0.5)
+        runtime.detect_thread.join(timeout=90.0)
+        if runtime.detect_thread.is_alive():
+            logger.warning("Detect thread did not stop cleanly during camera reload")
     _clear_latest_frame()
     set_camera_disconnected()
 
@@ -453,6 +486,7 @@ def get_worker_status() -> dict:
         "cameras": cameras,
         "primary_camera_id": runtime.primary_camera_id if runtime else None,
         "ocr_busy": is_busy(),
+        "ocr_worker": worker_status(),
     }
 
 
@@ -469,7 +503,12 @@ def _reload_cameras_sync() -> None:
             logger.warning("No enabled cameras configured in database")
             return
         _runtime = _start_runtime(configs)
-    logger.info("Camera worker reloaded with %s camera(s)", len(configs))
+    ocr = worker_status()
+    logger.info(
+        "Camera worker reloaded with %s camera(s); OCR worker %s",
+        len(configs),
+        f"warm pid={ocr['pid']}" if ocr.get("alive") else "will start on first scan",
+    )
 
 
 def reload_cameras() -> None:

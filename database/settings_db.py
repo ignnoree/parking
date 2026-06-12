@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import datetime
-import os
 
 from sqlalchemy import select
 
 from database.db import instance_to_dict, session_scope
 from database.models import Setting
 
-# Global keys editable from admin panel (values stored as JSON-compatible dicts).
+# Keys editable from admin panel (values stored as JSON-compatible dicts).
 BOOTSTRAP_KEYS = (
-    "PLATE_OCR_MIN_CONFIDENCE",
     "CAMERA_FRAME_INTERVAL_SECONDS",
     "PARKING_LOG_COOLDOWN_SECONDS",
     "light_profile_global",
 )
+
+# Seeded into PostgreSQL on first start; runtime reads DB only (not .env).
+DEFAULT_SETTINGS: dict[str, dict] = {
+    "CAMERA_FRAME_INTERVAL_SECONDS": {"value": "1.0"},
+    "PARKING_LOG_COOLDOWN_SECONDS": {"value": "600"},
+    "light_profile_global": {"value": "normal"},
+}
 
 
 def get_setting(key: str) -> dict | None:
@@ -32,6 +37,12 @@ def set_setting(key: str, value: dict | None) -> None:
         else:
             row.value = value
             row.updated_at = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        from helpers.runtime_settings import invalidate_runtime_settings_cache
+
+        invalidate_runtime_settings_cache()
+    except ImportError:
+        pass
 
 
 def list_settings() -> list[dict]:
@@ -40,18 +51,13 @@ def list_settings() -> list[dict]:
         return [instance_to_dict(row) for row in rows]
 
 
-def bootstrap_settings_from_env() -> None:
-    """Copy selected env defaults into settings when missing."""
-    defaults: dict[str, dict] = {
-        "PLATE_OCR_MIN_CONFIDENCE": {"value": os.environ.get("PLATE_OCR_MIN_CONFIDENCE", "0.45")},
-        "CAMERA_FRAME_INTERVAL_SECONDS": {
-            "value": os.environ.get("CAMERA_FRAME_INTERVAL_SECONDS", "1.0")
-        },
-        "PARKING_LOG_COOLDOWN_SECONDS": {
-            "value": os.environ.get("PARKING_LOG_COOLDOWN_SECONDS", "600")
-        },
-        "light_profile_global": {"value": "normal"},
-    }
-    for key, value in defaults.items():
+def bootstrap_default_settings() -> None:
+    """Insert code defaults for settings rows that do not exist yet."""
+    for key, value in DEFAULT_SETTINGS.items():
         if get_setting(key) is None:
             set_setting(key, value)
+
+
+def bootstrap_settings_from_env() -> None:
+    """Backward-compatible alias; env is no longer read."""
+    bootstrap_default_settings()

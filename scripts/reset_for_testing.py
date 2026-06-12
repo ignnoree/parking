@@ -27,7 +27,7 @@ except ImportError:
     pass
 
 from database.db import reset_db
-from helpers.utils import COLLECTION_FOLDER, UNKNOWN_PARKING_FOLDER, UPLOAD_FOLDER
+from helpers.utils import COLLECTION_FOLDER, UPLOAD_FOLDER, ensure_upload_dirs
 
 
 def _clear_folder(path: str) -> int:
@@ -65,8 +65,8 @@ def reset_testing_data(*, skip_confirm: bool = False) -> int:
         count = _clear_folder(folder)
         print(f"Cleared {os.path.abspath(folder)} ({count} item(s))")
 
-    os.makedirs(UNKNOWN_PARKING_FOLDER, exist_ok=True)
-    print("Recreated unknown_parking_logs folder.")
+    ensure_upload_dirs()
+    print("Recreated uploads folder structure (temp, known/unknown parking logs).")
     print("Done.")
     return 0
 

@@ -73,6 +73,25 @@ def insert_admin(username: str, password_plain: str, role: str) -> int | None:
         return admin.id
 
 
+def update_admin(
+    admin_id: int,
+    *,
+    role: str | None = None,
+    password_plain: str | None = None,
+) -> bool:
+    if role is not None and role not in VALID_ROLES:
+        return False
+    with session_scope() as session:
+        admin = session.get(Admin, admin_id)
+        if admin is None:
+            return False
+        if role is not None:
+            admin.role = role
+        if password_plain:
+            admin.password_hash = generate_password_hash(password_plain)
+        return True
+
+
 def delete_admin_by_id(admin_id: int) -> bool:
     with session_scope() as session:
         admin = session.get(Admin, admin_id)

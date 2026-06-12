@@ -2,6 +2,8 @@ import logging
 from typing import BinaryIO
 
 from database.logs_db import log_software_event
+from helpers.lighting_monitor import note_plate_scan
+from helpers.light_profile import resolve_light_profile
 from helpers.plate_pipeline import run_plate_detect_on_file
 from helpers.parking_logging import log_parking_events_for_results
 from helpers.plate_ocr_preprocess import light_profile_scope
@@ -16,10 +18,15 @@ def run_plate_detect_on_file_obj(
     light_profile: str = "normal",
 ) -> dict:
     gate = direction if direction in ("entry", "exit") else gate_direction()
-    with light_profile_scope(light_profile):
+    effective_profile = resolve_light_profile(light_profile)
+    with light_profile_scope(effective_profile):
         result = run_plate_detect_on_file(frame_path, direction=gate)
+    plates_logged = int(result.get("plates_detected") or 0) if isinstance(result, dict) else 0
+    note_plate_scan(light_profile=effective_profile, plates_logged=plates_logged)
     try:
-        log_parking_events_for_results(frame_path, result)
+        logged_plates = log_parking_events_for_results(frame_path, result)
+        if logged_plates:
+            result["logged_plates"] = logged_plates
     except Exception as exc:
         logging.exception("parking log persistence failed")
         log_software_event(

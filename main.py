@@ -23,7 +23,7 @@ from werkzeug.exceptions import HTTPException
 from database.db import bootstrap_db
 from routes.auth_routes import auth_bp
 from routes.app_routes import app_bp
-from helpers.utils import UPLOAD_FOLDER
+from helpers.utils import ensure_upload_dirs
 from helpers.guest_expiry import purge_expired_guest_vehicles, start_guest_expiry_thread
 from helpers.plate_detect_isolated import shutdown as shutdown_plate_worker
 from workers.camera_worker import start_camera_worker_thread
@@ -82,7 +82,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(app_bp)
 
 bootstrap_db()
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+ensure_upload_dirs()
 atexit.register(shutdown_plate_worker)
 
 

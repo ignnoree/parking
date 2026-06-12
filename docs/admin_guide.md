@@ -30,7 +30,14 @@ Default bootstrap account (change password in production): `admin` / `1234` (`sy
 
 ---
 
-## Camera configuration (`/admin`)
+## Admin panel (`/admin`)
+
+Tabs: **Cameras**, **Parking logs**, **Software logs** (requires `parking_admin` or `system_admin`).
+
+- **Parking logs** — filtered entry/exit history via `GET /api/parking-logs` (direction, match status, plate). `system_admin` can enable “Include soft-deleted vehicles”.
+- **Software logs** — technical audit trail via `GET /api/software-logs` (level, event, module filters).
+
+## Camera configuration (`/admin` → Cameras)
 
 After the first server start, cameras are stored in the **database**. Use `/admin` for changes — not `.env` (env is only used to seed the first camera on install).
 
@@ -144,15 +151,15 @@ Requires login (JWT) for log refresh and live stream API calls.
 
 ## Parking log behavior
 
-These are **server environment** settings (not editable in `/admin` UI today). Ask your server operator to change `.env` if needed.
-
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `PARKING_LOG_COOLDOWN_SECONDS` | 600 | Same plate not logged again for 10 minutes |
-| `PARKING_JITTER_COOLDOWN_SECONDS` | 20 | Suppresses noisy duplicate reads of the same plate |
-| `PARKING_READ_STABILITY_COUNT` | 2 | Unregistered plates need repeated similar reads before logging |
-| `PARKING_READ_STABILITY_WINDOW_SECONDS` | 8 | Time window for stability check |
-| `PLATE_OCR_MIN_CONFIDENCE` | 0.45 | Minimum confidence (0–1) to accept a plate read |
+| Setting | Default | Where | Purpose |
+|---------|---------|-------|---------|
+| `PARKING_LOG_COOLDOWN_SECONDS` | 600 | DB (`/api/settings`) | Same plate not logged again for 10 minutes |
+| `PLATE_OCR_MIN_CONFIDENCE` | 0.45 | Code (`plate_pipeline.py`) | Minimum combined confidence to accept a plate read |
+| `CAMERA_FRAME_INTERVAL_SECONDS` | 1.0 | DB (`/api/settings`) | Default seconds between plate scans |
+| `light_profile_global` | normal | DB (`/api/settings`) | Default glare/night preprocess profile |
+| `PARKING_JITTER_COOLDOWN_SECONDS` | 20 | `.env` | Suppresses noisy duplicate reads of the same plate |
+| `PARKING_READ_STABILITY_COUNT` | 2 | `.env` | Unregistered plates need repeated similar reads before logging |
+| `PARKING_READ_STABILITY_WINDOW_SECONDS` | 8 | `.env` | Time window for stability check |
 
 **Too many false unregistered logs?** Raise confidence or stability count.  
 **Missed plates?** Try `low_light` or lower confidence (with care).

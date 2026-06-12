@@ -177,8 +177,25 @@ def enhance_contrast(crop_bgr: np.ndarray, *, night: bool = False) -> np.ndarray
     return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
 
 
+def _binary_threshold_value() -> int:
+    return max(1, min(255, int(os.environ.get("PLATE_OCR_BINARY_THRESHOLD", "64"))))
+
+
+def binary_threshold_variant(crop_bgr: np.ndarray) -> np.ndarray:
+    """Fixed-threshold binarization (computervisioneng-style) before OCR."""
+    if crop_bgr is None or crop_bgr.size == 0:
+        return crop_bgr
+    gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, _binary_threshold_value(), 255, cv2.THRESH_BINARY_INV)
+    return cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+
+
 def suppress_divider_lines(crop_bgr: np.ndarray) -> np.ndarray:
-    """Mask thin horizontal/vertical divider lines that OCR reads as '=' or '|'."""
+    """
+    Mask thin horizontal divider lines (OCR reads as '=').
+    Vertical strokes are NOT removed — they match capital I / 1 on plates.
+    Set PLATE_SUPPRESS_VERTICAL_DIVIDERS=true only if dividers are vertical bars.
+    """
     if crop_bgr is None or crop_bgr.size == 0:
         return crop_bgr
 
@@ -187,12 +204,13 @@ def suppress_divider_lines(crop_bgr: np.ndarray) -> np.ndarray:
     h, w = binary.shape[:2]
 
     h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(12, w // 4), 1))
-    h_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel, iterations=1)
+    mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel, iterations=1)
 
-    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(8, h // 3)))
-    v_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel, iterations=1)
+    if _flag("PLATE_SUPPRESS_VERTICAL_DIVIDERS", default="false"):
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(8, h // 3)))
+        v_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel, iterations=1)
+        mask = cv2.bitwise_or(mask, v_lines)
 
-    mask = cv2.bitwise_or(h_lines, v_lines)
     cleaned = gray.copy()
     cleaned[mask > 0] = 255
     return cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
@@ -219,11 +237,16 @@ def build_ocr_variants(crop_bgr: np.ndarray) -> list[np.ndarray]:
     flat = correct_perspective(crop_bgr)
     cleaned = suppress_divider_lines(flat)
 
+    # Raw flat (no divider masking) preserves thin letters like I.
+    no_divider = deblur_plate(flat)
     variants: list[np.ndarray] = [
         crop_bgr,
         flat,
+        enhance_contrast(no_divider, night=False),
         preprocess_plate_crop(crop_bgr),
         enhance_contrast(deblur_plate(cleaned), night=False),
+        binary_threshold_variant(flat),
+        binary_threshold_variant(cleaned),
     ]
     if night:
         variants.append(enhance_contrast(deblur_plate(cleaned), night=True))

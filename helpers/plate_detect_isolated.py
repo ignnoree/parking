@@ -16,6 +16,7 @@ _process: mp.Process | None = None
 _request_q: mp.Queue | None = None
 _response_q: mp.Queue | None = None
 _lock = threading.Lock()
+_detect_call_lock = threading.Lock()
 _busy = threading.Event()
 
 
@@ -24,6 +25,7 @@ def _worker_loop(request_q: mp.Queue, response_q: mp.Queue) -> None:
     from helpers.plate_worker_pipeline import run_plate_detect_on_file_obj
 
     get_alpr()
+    logger.info("Plate OCR models loaded in child process (pid=%s)", os.getpid())
 
     while True:
         item = request_q.get()
@@ -98,6 +100,22 @@ def is_busy() -> bool:
     return _busy.is_set()
 
 
+def worker_status() -> dict[str, Any]:
+    with _lock:
+        proc = _process
+        pid = proc.pid if proc is not None else None
+        alive = proc is not None and proc.is_alive()
+    return {"pid": pid, "alive": alive, "busy": is_busy()}
+
+
+def wait_until_idle(timeout: float = 60.0) -> bool:
+    """Wait for in-flight OCR before camera reload (avoids orphaned detect threads)."""
+    deadline = time.monotonic() + max(0.5, timeout)
+    while is_busy() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not is_busy()
+
+
 def detect_frame_isolated(
     path: str,
     *,
@@ -111,33 +129,34 @@ def detect_frame_isolated(
         return None
 
     job_id = os.path.basename(path)
-    _busy.set()
-    try:
-        assert _request_q is not None and _response_q is not None
-        _request_q.put((job_id, path, direction, light_profile, frame_shape), timeout=5.0)
+    with _detect_call_lock:
+        _busy.set()
+        try:
+            assert _request_q is not None and _response_q is not None
+            _request_q.put((job_id, path, direction, light_profile, frame_shape), timeout=5.0)
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                msg = _response_q.get(timeout=0.25)
-            except queue.Empty:
-                continue
-            if msg.get("job_id") != job_id:
-                continue
-            if not msg.get("ok"):
-                logger.error("Plate detect child failed: %s", msg.get("error"))
-                return None
-            result = msg.get("result")
-            return result if isinstance(result, dict) else None
-        logger.error("Plate detect child timed out for %s", path)
-        return None
-    except Exception:
-        logger.exception("Failed to submit plate detect to child process")
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-        return None
-    finally:
-        _busy.clear()
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    msg = _response_q.get(timeout=0.25)
+                except queue.Empty:
+                    continue
+                if msg.get("job_id") != job_id:
+                    continue
+                if not msg.get("ok"):
+                    logger.error("Plate detect child failed: %s", msg.get("error"))
+                    return None
+                result = msg.get("result")
+                return result if isinstance(result, dict) else None
+            logger.error("Plate detect child timed out for %s", path)
+            return None
+        except Exception:
+            logger.exception("Failed to submit plate detect to child process")
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return None
+        finally:
+            _busy.clear()

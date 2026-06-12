@@ -123,6 +123,10 @@
                     <label for="guest_expires_at">Guest expires at *</label>
                     <input id="guest_expires_at" name="guest_expires_at" type="datetime-local">
                 </div>
+                <div class="field full">
+                    <label for="reference_image">Reference photo (optional)</label>
+                    <input id="reference_image" name="reference_image" type="file" accept="image/jpeg,image/png,image/webp">
+                </div>
             </div>
             <button type="submit" id="submitBtn">Register</button>
         </form>
@@ -136,8 +140,9 @@
         const successMessage = document.getElementById("successMessage");
         const submitBtn = document.getElementById("submitBtn");
 
-        function authHeaders() {
-            const h = { "Content-Type": "application/json", Accept: "application/json" };
+        function authHeaders(json) {
+            const h = { Accept: "application/json" };
+            if (json) h["Content-Type"] = "application/json";
             const t = localStorage.getItem("access_token");
             if (t) h.Authorization = "Bearer " + t;
             return h;
@@ -165,32 +170,59 @@
             setMessage(errorMessage, "");
             submitBtn.disabled = true;
             const isGuest = enrollForm.kind.value === "guest";
-            const payload = {
-                plate_number: document.getElementById("plate_number").value.trim(),
-                owner_name: document.getElementById("owner_name").value.trim() || null,
-                owner_lastname: document.getElementById("owner_lastname").value.trim() || null,
-                car_model: document.getElementById("car_model").value.trim() || null,
-                door_number: document.getElementById("door_number").value.trim() || null,
-                floor_number: document.getElementById("floor_number").value.trim() || null,
-                vehicle_class: document.getElementById("vehicle_class").value,
-                is_guest: isGuest,
-            };
-            if (isGuest) {
-                const raw = document.getElementById("guest_expires_at").value;
-                if (!raw) {
-                    setMessage(errorMessage, "Guest expiry date is required.");
-                    submitBtn.disabled = false;
-                    return;
+            const fileInput = document.getElementById("reference_image");
+            const hasFile = fileInput.files && fileInput.files.length > 0;
+            let fetchOpts;
+            if (hasFile) {
+                const form = new FormData();
+                form.append("plate_number", document.getElementById("plate_number").value.trim());
+                form.append("owner_name", document.getElementById("owner_name").value.trim());
+                form.append("owner_lastname", document.getElementById("owner_lastname").value.trim());
+                form.append("car_model", document.getElementById("car_model").value.trim());
+                form.append("door_number", document.getElementById("door_number").value.trim());
+                form.append("floor_number", document.getElementById("floor_number").value.trim());
+                form.append("vehicle_class", document.getElementById("vehicle_class").value);
+                form.append("is_guest", isGuest ? "true" : "false");
+                if (isGuest) {
+                    const raw = document.getElementById("guest_expires_at").value;
+                    if (!raw) {
+                        setMessage(errorMessage, "Guest expiry date is required.");
+                        submitBtn.disabled = false;
+                        return;
+                    }
+                    form.append("guest_expires_at", new Date(raw).toISOString());
                 }
-                payload.guest_expires_at = new Date(raw).toISOString();
-            }
-            try {
-                const res = await fetch("/api/enroll", {
+                form.append("reference_image", fileInput.files[0]);
+                fetchOpts = { method: "POST", credentials: "include", headers: authHeaders(false), body: form };
+            } else {
+                const payload = {
+                    plate_number: document.getElementById("plate_number").value.trim(),
+                    owner_name: document.getElementById("owner_name").value.trim() || null,
+                    owner_lastname: document.getElementById("owner_lastname").value.trim() || null,
+                    car_model: document.getElementById("car_model").value.trim() || null,
+                    door_number: document.getElementById("door_number").value.trim() || null,
+                    floor_number: document.getElementById("floor_number").value.trim() || null,
+                    vehicle_class: document.getElementById("vehicle_class").value,
+                    is_guest: isGuest,
+                };
+                if (isGuest) {
+                    const raw = document.getElementById("guest_expires_at").value;
+                    if (!raw) {
+                        setMessage(errorMessage, "Guest expiry date is required.");
+                        submitBtn.disabled = false;
+                        return;
+                    }
+                    payload.guest_expires_at = new Date(raw).toISOString();
+                }
+                fetchOpts = {
                     method: "POST",
                     credentials: "include",
-                    headers: authHeaders(),
+                    headers: authHeaders(true),
                     body: JSON.stringify(payload),
-                });
+                };
+            }
+            try {
+                const res = await fetch("/api/enroll", fetchOpts);
                 const data = await res.json();
                 if (!res.ok) {
                     setMessage(errorMessage, data.message || data.error || "Enrollment failed.");
