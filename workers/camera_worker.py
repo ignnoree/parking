@@ -8,7 +8,7 @@ import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -19,11 +19,13 @@ from database.cameras_db import (
     parse_camera_source,
 )
 from database.logs_db import log_software_event
+from helpers.lighting_monitor import note_plate_scan
 from helpers.live_frame_buffer import (
     publish_frame,
     set_camera_disconnected,
     update_overlay_from_plate_results,
 )
+from helpers.parking_logging import log_parking_events_for_results
 from helpers.plate_detect_isolated import (
     detect_frame_isolated,
     is_busy,
@@ -31,6 +33,8 @@ from helpers.plate_detect_isolated import (
     worker_status,
 )
 from helpers.plate_detect_retries import detect_with_retries
+from helpers.plate_pipeline import build_result_row, plate_debug_logging
+from helpers.plate_tracker import PlateTracker, plate_track_min_hits, plate_tracking_enabled
 from helpers.light_profile import resolve_light_profile
 from helpers.utils import UPLOAD_TEMP_FOLDER
 
@@ -57,6 +61,13 @@ class _DetectJob:
     light_profile: str
 
 
+@dataclass
+class _CameraTrackState:
+    """Per-camera tracker used for multi-frame voting before logging."""
+
+    tracker: PlateTracker = field(default_factory=PlateTracker)
+
+
 class _WorkerRuntime:
     def __init__(self) -> None:
         self.stop_event = threading.Event()
@@ -68,9 +79,19 @@ class _WorkerRuntime:
         self.detect_queue: queue.Queue[_DetectJob | None] = queue.Queue(
             maxsize=camera_detect_queue_size()
         )
+        self.track_states: dict[int, _CameraTrackState] = {}
+        self.track_lock = threading.Lock()
 
     def alive(self) -> bool:
         return any(t.is_alive() for t in self.drainer_threads)
+
+    def track_state_for(self, camera_id: int) -> _CameraTrackState:
+        with self.track_lock:
+            state = self.track_states.get(camera_id)
+            if state is None:
+                state = _CameraTrackState()
+                self.track_states[camera_id] = state
+            return state
 
 
 _runtime: _WorkerRuntime | None = None
@@ -220,6 +241,172 @@ def _warn_env_camera_url_mismatch() -> None:
         )
 
 
+def _remove_temp_file(path: str) -> None:
+    if not path:
+        return
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        logger.debug("Failed to remove temp frame %s", path, exc_info=True)
+
+
+def _route_results_through_tracker(
+    *,
+    job: _DetectJob,
+    frame_path: str,
+    result: dict,
+    runtime: _WorkerRuntime,
+) -> dict | None:
+    """
+    Feed the OCR result through the per-camera tracker for multi-frame voting.
+
+    Returns a synthetic payload of just the *logged* plate(s) so the overlay
+    only highlights confirmed reads (and only once per car).
+    """
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        return None
+
+    raw_results = [r for r in (result.get("results") or []) if isinstance(r, dict)]
+    state = runtime.track_state_for(job.camera_id)
+    tracker = state.tracker
+    now = time.monotonic()
+
+    # IoU-associate raw detections with active tracks (creates new tracks as needed).
+    tracker.update(
+        [{"box": r.get("box"), "confidence": r.get("confidence")} for r in raw_results if r.get("box")],
+        now=now,
+    )
+
+    min_hits = plate_track_min_hits()
+    logged_payload: list[dict] = []
+    for det in raw_results:
+        box = det.get("box")
+        if not isinstance(box, dict):
+            continue
+        track = tracker.track_for_box(box)
+        if track is None:
+            continue
+
+        # OCR-similarity association: if the IoU pass landed on a brand-new
+        # track (no reads yet) and another active track has similar OCR text,
+        # merge into that track instead. This catches the case where a moving
+        # car between scans doesn't overlap its previous box but has a
+        # recognizably-similar plate read.
+        plate_norm = str(det.get("plate_normalized") or "").strip()
+        if (
+            not track.ocr_reads
+            and not track.logged
+            and plate_norm
+        ):
+            sibling = tracker.track_for_ocr_text(plate_norm, exclude_id=track.track_id)
+            if sibling is not None and tracker.merge_into(track.track_id, sibling.track_id):
+                if plate_debug_logging():
+                    logger.info(
+                        "[TRACKER] cam=%s merge new_track->%s text=%r (OCR-similarity fallback)",
+                        job.camera_id,
+                        sibling.track_id,
+                        plate_norm,
+                    )
+                track = sibling
+
+        if track.logged:
+            continue
+        # Filter single-frame ghost detections: require min_hits before trusting OCR reads.
+        if track.hits < min_hits:
+            if plate_debug_logging():
+                logger.info(
+                    "[TRACKER] cam=%s track=%s skip read=%r reason=min_hits hits=%s need=%s",
+                    job.camera_id,
+                    track.track_id,
+                    det.get("plate_normalized"),
+                    track.hits,
+                    min_hits,
+                )
+            continue
+
+        tracker.mark_ocr_pending(track.track_id, now=now)
+        tracker.record_ocr_read(
+            track.track_id,
+            {
+                "plate_text": det.get("plate_text"),
+                "plate_normalized": det.get("plate_normalized"),
+                "confidence": det.get("confidence"),
+            },
+        )
+        tracker.mark_ocr_finished(track.track_id)
+
+        if plate_debug_logging():
+            logger.info(
+                "[TRACKER] cam=%s track=%s read=%r conf=%.2f hits=%s attempts=%s",
+                job.camera_id,
+                track.track_id,
+                det.get("plate_normalized"),
+                float(det.get("confidence") or 0),
+                track.hits,
+                track.ocr_attempts,
+            )
+
+        stable = tracker.stable_read_for_logging(track.track_id)
+        if stable is None:
+            continue
+
+        timing = tracker.log_timing(track.track_id, now=now)
+        row = build_result_row(
+            {
+                "plate_text": stable.get("plate_text"),
+                "plate_normalized": stable.get("plate_normalized"),
+                "confidence": stable.get("confidence"),
+                "box": dict(track.box),
+            },
+            direction=job.direction,
+            timing=timing,
+            track_confirmed=True,
+        )
+        if row is None:
+            continue
+
+        payload = {
+            "status": "ok",
+            "direction": job.direction,
+            "plates_detected": 1,
+            "results": [row],
+        }
+        try:
+            # wrap_s is already embedded in row["timing"] from tracker.log_timing,
+            # so parking_logging will keep it instead of recomputing from a per-frame anchor.
+            logged_plates = log_parking_events_for_results(frame_path, payload)
+        except Exception:
+            logger.exception(
+                "Tracker log persistence failed (camera_id=%s track=%s)",
+                job.camera_id,
+                track.track_id,
+            )
+            continue
+
+        # Either way (logged OR cooldown-suppressed) mark the track confirmed so
+        # subsequent frames of the same car stop re-running through the voting path.
+        tracker.mark_confirmed(
+            track.track_id,
+            plate_text=str(stable.get("plate_text") or ""),
+            plate_normalized=str(stable.get("plate_normalized") or ""),
+            confidence=float(stable.get("confidence") or 0),
+            logged=True,
+        )
+        if logged_plates:
+            logged_payload.extend(logged_plates)
+
+    if not logged_payload:
+        return None
+    return {
+        "status": "ok",
+        "direction": job.direction,
+        "plates_detected": len(logged_payload),
+        "results": logged_payload,
+        "logged_plates": logged_payload,
+    }
+
+
 def _run_plate_detect_on_frame(job: _DetectJob) -> None:
     path = os.path.join(UPLOAD_TEMP_FOLDER, f"camera_{job.camera_id}_{uuid.uuid4().hex}.jpg")
     if not cv2.imwrite(path, job.frame):
@@ -233,15 +420,39 @@ def _run_plate_detect_on_frame(job: _DetectJob) -> None:
         return
 
     profile = resolve_light_profile(job.light_profile)
-    result = detect_with_retries(
-        detect_frame_isolated,
-        path,
-        direction=job.direction,
-        light_profile=profile,
-        frame_shape=job.frame.shape[:2],
-    )
-    if result and _runtime and job.camera_id == _runtime.primary_camera_id:
-        update_overlay_from_plate_results(job.frame.shape, result)
+    tracker_on = plate_tracking_enabled() and _runtime is not None
+    try:
+        result = detect_with_retries(
+            detect_frame_isolated,
+            path,
+            direction=job.direction,
+            light_profile=profile,
+            frame_shape=job.frame.shape[:2],
+            skip_logging=tracker_on,
+        )
+
+        if tracker_on and _runtime is not None:
+            plates_detected = (
+                int(result.get("plates_detected") or 0) if isinstance(result, dict) else 0
+            )
+            note_plate_scan(light_profile=profile, plates_logged=plates_detected)
+
+            overlay_payload = _route_results_through_tracker(
+                job=job,
+                frame_path=path,
+                result=result if isinstance(result, dict) else {},
+                runtime=_runtime,
+            )
+            if overlay_payload and job.camera_id == _runtime.primary_camera_id:
+                update_overlay_from_plate_results(job.frame.shape, overlay_payload)
+        else:
+            if result and _runtime and job.camera_id == _runtime.primary_camera_id:
+                update_overlay_from_plate_results(job.frame.shape, result)
+    finally:
+        # Tracker mode keeps the file alive across the child call; we always
+        # clean it up here so per-frame temp files cannot leak.
+        if tracker_on:
+            _remove_temp_file(path)
 
 
 def _enqueue_detect(job: _DetectJob, detect_queue: queue.Queue[_DetectJob | None]) -> None:
@@ -420,6 +631,10 @@ def _stop_runtime(runtime: _WorkerRuntime) -> None:
         runtime.detect_thread.join(timeout=90.0)
         if runtime.detect_thread.is_alive():
             logger.warning("Detect thread did not stop cleanly during camera reload")
+    with runtime.track_lock:
+        for state in runtime.track_states.values():
+            state.tracker.reset()
+        runtime.track_states.clear()
     _clear_latest_frame()
     set_camera_disconnected()
 

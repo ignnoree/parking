@@ -16,7 +16,13 @@ from fast_alpr.base import BaseOCR, OcrResult
 from fast_alpr.default_ocr import DefaultOCR
 
 from helpers.plate_crop import crop_ocr_plate
-from helpers.plate_format import clean_plate_ocr_text, ocr_read_variants, rank_ocr_candidate, sanitize_plate_ocr_text
+from helpers.plate_format import (
+    clean_plate_ocr_text,
+    is_plausible_plate,
+    ocr_read_variants,
+    rank_ocr_candidate,
+    sanitize_plate_ocr_text,
+)
 from helpers.plate_ocr_preprocess import build_ocr_variants
 
 logger = logging.getLogger(__name__)
@@ -119,7 +125,7 @@ def easyocr_langs() -> list[str]:
     return codes or ["en", "ar"]
 
 
-def plate_ocr_backend() -> Literal["paddle", "bilingual", "ensemble", "fast", "easyocr"]:
+def plate_ocr_backend() -> Literal["paddle", "bilingual", "ensemble", "fast", "easyocr", "tiered"]:
     raw = os.environ.get("PLATE_OCR_BACKEND", "bilingual").strip().lower()
     if raw in {"paddle", "paddleocr"}:
         return "paddle"
@@ -131,7 +137,29 @@ def plate_ocr_backend() -> Literal["paddle", "bilingual", "ensemble", "fast", "e
         return "easyocr"
     if raw == "ensemble":
         return "ensemble"
+    if raw in {"tiered", "tier", "fast+bilingual"}:
+        return "tiered"
     return "bilingual"
+
+
+def plate_ocr_early_exit_confidence() -> float:
+    """One plausible read at/above this confidence stops further OCR passes (0 disables)."""
+    return max(0.0, min(1.0, float(os.environ.get("PLATE_OCR_EARLY_EXIT_CONF", "0.75"))))
+
+
+def _early_exit_hit(candidates: list[OcrResult]) -> bool:
+    """True when a candidate is plausible and confident enough to skip remaining OCR passes."""
+    threshold = plate_ocr_early_exit_confidence()
+    if threshold <= 0:
+        return False
+    for cand in candidates:
+        if cand is None or not cand.text:
+            continue
+        if _ocr_confidence(cand.confidence) < threshold:
+            continue
+        if is_plausible_plate(cand.text):
+            return True
+    return False
 
 
 def _ocr_confidence(conf: float | list[float]) -> float:
@@ -190,7 +218,7 @@ def _with_ambiguity_variants(results: list[OcrResult]) -> list[OcrResult]:
                 expanded.append(
                     OcrResult(
                         text=variant,
-                        confidence=max(0.0, float(result.confidence) * 0.99),
+                        confidence=max(0.0, _ocr_confidence(result.confidence) * 0.99),
                     )
                 )
     return expanded
@@ -287,6 +315,9 @@ class PaddleOcrBackend(BaseOCR):
                     )
                 )
 
+            if _early_exit_hit(results):
+                break
+
         return _with_ambiguity_variants(results)
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
@@ -310,6 +341,8 @@ class BilingualPaddleOcrBackend(BaseOCR):
                 candidates.extend(backend.collect_candidates(cropped_plate))
             except Exception:
                 logger.debug("PaddleOCR lang=%s failed", backend._lang, exc_info=True)
+            if _early_exit_hit(candidates):
+                break
         return candidates
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
@@ -331,7 +364,11 @@ class FastPlateOcrBackend(BaseOCR):
             if out and out.text:
                 cleaned = sanitize_plate_ocr_text(out.text)
                 if cleaned:
-                    results.append(OcrResult(text=cleaned, confidence=out.confidence))
+                    results.append(
+                        OcrResult(text=cleaned, confidence=_ocr_confidence(out.confidence))
+                    )
+            if _early_exit_hit(results):
+                break
         return _with_ambiguity_variants(results)
 
     def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
@@ -396,6 +433,37 @@ class EnsembleOcrBackend(BaseOCR):
         return _pick_best(candidates)
 
 
+class TieredOcrBackend(BaseOCR):
+    """
+    Plate-trained fast model (CCT) first; bilingual Paddle (en+ar) only when the
+    fast tier has no confident plausible read. Keeps Latin plates fast and
+    accurate while still reading Arabic-script plates.
+    """
+
+    def __init__(self, model: str, gpu: bool) -> None:
+        self._fast = FastPlateOcrBackend(model, gpu)
+        self._paddle = BilingualPaddleOcrBackend(paddle_ocr_langs(), gpu)
+
+    def collect_candidates(self, cropped_plate: np.ndarray) -> list[OcrResult]:
+        if cropped_plate is None or cropped_plate.size == 0:
+            return []
+        candidates: list[OcrResult] = []
+        try:
+            candidates.extend(self._fast.collect_candidates(cropped_plate))
+        except Exception:
+            logger.debug("Fast OCR tier failed", exc_info=True)
+        if _early_exit_hit(candidates):
+            return candidates
+        try:
+            candidates.extend(self._paddle.collect_candidates(cropped_plate))
+        except Exception:
+            logger.debug("Paddle OCR tier failed", exc_info=True)
+        return candidates
+
+    def predict(self, cropped_plate: np.ndarray) -> OcrResult | None:
+        return _pick_best(self.collect_candidates(cropped_plate))
+
+
 def _build_paddle_backend(gpu: bool) -> BaseOCR:
     langs = paddle_ocr_langs()
     if len(langs) <= 1:
@@ -415,6 +483,8 @@ def _build_ocr_backend(gpu: bool) -> BaseOCR:
         return FastPlateOcrBackend(model, gpu)
     if backend == "easyocr":
         return EasyOcrBackend(easyocr_langs(), gpu)
+    if backend == "tiered":
+        return TieredOcrBackend(model, gpu)
     return EnsembleOcrBackend(model, gpu)
 
 

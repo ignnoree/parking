@@ -89,7 +89,7 @@ def get_runtime_int(setting_key: str, default: int) -> int:
 
 
 def camera_frame_interval_seconds() -> float:
-    return max(0.5, get_runtime_float("CAMERA_FRAME_INTERVAL_SECONDS", 1.0))
+    return max(0.5, get_runtime_float("CAMERA_FRAME_INTERVAL_SECONDS", 0.5))
 
 
 def parking_log_cooldown_seconds() -> int:

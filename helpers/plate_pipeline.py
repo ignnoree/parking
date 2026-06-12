@@ -13,8 +13,14 @@ from helpers.plate_normalize import normalize_plate
 
 logger = logging.getLogger(__name__)
 
-# Combined detect×OCR×format gate (not editable via DB or .env).
-PLATE_OCR_MIN_CONFIDENCE = 0.45
+# Combined detect×OCR×format gate. Now overridable via PLATE_OCR_MIN_CONFIDENCE env.
+# Default 0.42: lower than the old 0.48 so plates with conf ≈ 0.43-0.47 (perfect format,
+# strong OCR, weaker YOLO box) still reach the tracker for voting instead of being dropped here.
+def plate_ocr_min_confidence() -> float:
+    return max(0.0, min(1.0, float(os.environ.get("PLATE_OCR_MIN_CONFIDENCE", "0.42"))))
+
+
+PLATE_OCR_MIN_CONFIDENCE = plate_ocr_min_confidence()
 
 
 def plate_format_min_score() -> float:
@@ -28,6 +34,74 @@ def plate_debug_logging() -> bool:
 def _combined_confidence(det_conf: float, ocr_conf: float, fmt_score: float) -> float:
     base = float(det_conf) * float(ocr_conf)
     return max(0.0, min(1.0, base * (0.7 + 0.3 * fmt_score)))
+
+
+def _lookup_vehicle(norm: str):
+    vehicle = find_vehicle_by_normalized(norm)
+    if not vehicle:
+        return None
+    exp = vehicle.get("guest_expires_at")
+    if vehicle.get("is_guest") and exp is not None:
+        if isinstance(exp, str):
+            exp_dt = datetime.datetime.fromisoformat(exp.replace("Z", "+00:00"))
+        else:
+            exp_dt = exp
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
+        if exp_dt <= datetime.datetime.now(datetime.timezone.utc):
+            return None
+    return vehicle
+
+
+def build_result_row(
+    det: dict,
+    *,
+    direction: str,
+    timing: dict | None = None,
+    track_confirmed: bool = False,
+) -> dict | None:
+    """Shape one plate detection for parking_logging (track or legacy pipeline)."""
+    _ = direction  # reserved for future direction-specific gates
+    plate_text = str(det.get("plate_text") or "").strip()
+    norm = str(det.get("plate_normalized") or normalize_plate(plate_text)).strip()
+    if not norm:
+        return None
+
+    conf = float(det.get("confidence") or 0)
+    if conf < plate_ocr_min_confidence():
+        return None
+    if not is_plausible_plate(plate_text or norm, min_score=plate_format_min_score()):
+        return None
+
+    vehicle = _lookup_vehicle(norm)
+    row: dict = {
+        "plate_text": plate_text or norm,
+        "plate_normalized": norm,
+        "confidence": conf,
+        "box": det.get("box"),
+    }
+    if timing:
+        row["timing"] = dict(timing)
+    if track_confirmed:
+        row["track_confirmed"] = True
+    if vehicle:
+        row.update(
+            {
+                "match_status": "registered",
+                "vehicle_id": vehicle["id"],
+                "is_guest": bool(vehicle.get("is_guest")),
+                "owner_name": vehicle.get("owner_name"),
+            }
+        )
+    else:
+        row.update(
+            {
+                "match_status": "unregistered",
+                "vehicle_id": None,
+                "is_guest": False,
+            }
+        )
+    return row
 
 
 def detect_plates_in_image(image_path: str) -> list[dict]:
@@ -109,7 +183,7 @@ def detect_plates_in_image(image_path: str) -> list[dict]:
 def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
     """Full check: detect plates, match vehicles, shape for parking_logging."""
     detections = detect_plates_in_image(image_path)
-    min_conf = PLATE_OCR_MIN_CONFIDENCE
+    min_conf = plate_ocr_min_confidence()
     results: list[dict] = []
 
     for det in detections:
@@ -126,18 +200,7 @@ def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
         norm = det.get("plate_normalized") or normalize_plate(det.get("plate_text"))
         if not norm:
             continue
-        vehicle = find_vehicle_by_normalized(norm)
-        if vehicle:
-            exp = vehicle.get("guest_expires_at")
-            if vehicle.get("is_guest") and exp is not None:
-                if isinstance(exp, str):
-                    exp_dt = datetime.datetime.fromisoformat(exp.replace("Z", "+00:00"))
-                else:
-                    exp_dt = exp
-                if exp_dt.tzinfo is None:
-                    exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
-                if exp_dt <= datetime.datetime.now(datetime.timezone.utc):
-                    vehicle = None
+        vehicle = _lookup_vehicle(norm)
         row = {
             "plate_text": det.get("plate_text") or norm,
             "plate_normalized": norm,

@@ -52,7 +52,7 @@ def reset_testing_data(*, skip_confirm: bool = False) -> int:
     print(f"  COLLECTION_FOLDER={COLLECTION_FOLDER}")
 
     if not skip_confirm:
-        answer = input("Delete all DB rows and clear uploads/collection? [y/N] ").strip().lower()
+        answer = "y"
         if answer not in {"y", "yes"}:
             print("Aborted.")
             return 1

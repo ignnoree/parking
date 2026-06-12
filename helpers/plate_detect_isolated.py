@@ -31,7 +31,13 @@ def _worker_loop(request_q: mp.Queue, response_q: mp.Queue) -> None:
         item = request_q.get()
         if item is None:
             break
-        job_id, path, direction, light_profile, frame_shape = item
+        # Backward compatible: older callers send 5-tuple without skip_logging.
+        if len(item) == 6:
+            job_id, path, direction, light_profile, frame_shape, skip_logging = item
+        else:
+            job_id, path, direction, light_profile, frame_shape = item
+            skip_logging = False
+        keep_file = bool(skip_logging)
         try:
             with open(path, "rb") as f:
                 result = run_plate_detect_on_file_obj(
@@ -39,6 +45,7 @@ def _worker_loop(request_q: mp.Queue, response_q: mp.Queue) -> None:
                     path,
                     direction=direction,
                     light_profile=light_profile,
+                    skip_logging=skip_logging,
                 )
             response_q.put(
                 {"job_id": job_id, "ok": True, "result": result, "frame_shape": frame_shape}
@@ -49,7 +56,7 @@ def _worker_loop(request_q: mp.Queue, response_q: mp.Queue) -> None:
                 {"job_id": job_id, "ok": False, "error": str(exc), "frame_shape": frame_shape}
             )
         finally:
-            if os.path.isfile(path):
+            if not keep_file and os.path.isfile(path):
                 try:
                     os.remove(path)
                 except OSError:
@@ -123,8 +130,14 @@ def detect_frame_isolated(
     light_profile: str,
     frame_shape: tuple[int, ...],
     timeout: float = 120.0,
+    skip_logging: bool = False,
 ) -> dict[str, Any] | None:
-    """Run OCR in child process; releases GIL while waiting on the response queue."""
+    """Run OCR in child process; releases GIL while waiting on the response queue.
+
+    When skip_logging=True, the child returns the OCR payload without writing
+    to the parking log and leaves the source frame on disk for the caller to
+    use (e.g. for tracker-based deferred logging).
+    """
     if not ensure_started():
         return None
 
@@ -133,7 +146,10 @@ def detect_frame_isolated(
         _busy.set()
         try:
             assert _request_q is not None and _response_q is not None
-            _request_q.put((job_id, path, direction, light_profile, frame_shape), timeout=5.0)
+            _request_q.put(
+                (job_id, path, direction, light_profile, frame_shape, bool(skip_logging)),
+                timeout=5.0,
+            )
 
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:

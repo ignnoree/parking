@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 import uuid
 
 import cv2
@@ -129,7 +130,37 @@ def _persist_plate_crop(
     return _relpath(dest)
 
 
-def log_parking_events_for_results(frame_path: str, result_payload: dict) -> list[dict]:
+def _format_wrap_suffix(timing: dict) -> str:
+    wrap_s = timing.get("wrap_s")
+    if wrap_s is None:
+        wrap_s = timing.get("detect_to_log_s")
+    if wrap_s is None:
+        return ""
+    parts = [f" wrap_s={wrap_s}s"]
+    ocr_s = timing.get("ocr_elapsed_s")
+    if ocr_s is not None:
+        parts.append(f" ocr_s={ocr_s}s")
+    hits = timing.get("track_hits")
+    if hits is not None:
+        parts.append(f" hits={hits}")
+    return "".join(parts)
+
+
+def _resolve_item_timing(item: dict, *, wrap_started_at: float | None) -> dict:
+    timing = dict(item.get("timing") or {})
+    if wrap_started_at is not None and "wrap_s" not in timing and "detect_to_log_s" not in timing:
+        timing["wrap_s"] = round(max(0.0, time.monotonic() - wrap_started_at), 3)
+    if "wrap_s" not in timing and timing.get("detect_to_log_s") is not None:
+        timing["wrap_s"] = timing["detect_to_log_s"]
+    return timing
+
+
+def log_parking_events_for_results(
+    frame_path: str,
+    result_payload: dict,
+    *,
+    wrap_started_at: float | None = None,
+) -> list[dict]:
     if not result_payload or result_payload.get("status") != "ok":
         return []
 
@@ -150,8 +181,13 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> lis
             continue
         match_status = item.get("match_status") or "unregistered"
         vehicle_id = item.get("vehicle_id")
+        track_confirmed = bool(item.get("track_confirmed"))
 
-        if match_status != "registered" and not _stable_unregistered_read(norm, now_utc):
+        if (
+            match_status != "registered"
+            and not track_confirmed
+            and not _stable_unregistered_read(norm, now_utc)
+        ):
             _read_history.append((norm, now_utc))
             continue
 
@@ -193,6 +229,8 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> lis
             crop_folder=crop_folder,
         )
 
+        timing = _resolve_item_timing(item, wrap_started_at=wrap_started_at)
+
         details = json.dumps(
             {
                 "cooldown_s": parking_log_cooldown_seconds(),
@@ -202,6 +240,7 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> lis
                 "crop_frame": crop_path,
                 "plate_box": item.get("box"),
                 "plates_in_frame": len(results),
+                "timing": timing,
             },
             ensure_ascii=False,
         )
@@ -228,13 +267,14 @@ def log_parking_events_for_results(frame_path: str, result_payload: dict) -> lis
             }
         )
         logging.info(
-            "[PARKING_LOGGED] plate=%s canonical=%s direction=%s status=%s vehicle_id=%s conf=%s",
+            "[PARKING_LOGGED] plate=%s canonical=%s direction=%s status=%s vehicle_id=%s conf=%s%s",
             norm,
             canonical,
             direction,
             match_status,
             vehicle_id,
             item.get("confidence"),
+            _format_wrap_suffix(timing),
         )
 
     if logged_any and len(results) > 1:

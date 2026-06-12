@@ -33,6 +33,7 @@ def fix_latin_ambiguous_chars(text: str) -> str:
     """
     Fix common Latin OCR swaps using neighbor context (cross-border safe).
     - 1 -> I when beside letters (thin I misread as one)
+    - 1 -> I when adjacent to a letter in a letter-heavy plate (e.g. MW51VSU -> MWSIVSU)
     - 0 <-> O using letter vs digit neighbors
     """
     if not text or not text.isascii():
@@ -46,6 +47,25 @@ def fix_latin_ambiguous_chars(text: str) -> str:
     def digit(ch: str) -> bool:
         return len(ch) == 1 and ch.isdigit()
 
+    other_letters = sum(1 for ch in chars if latin_letter(ch))
+    other_digits = sum(1 for ch in chars if digit(ch) and ch != "1")
+    letter_heavy = other_letters > other_digits
+
+    def digit_run_length_at(idx: int) -> int:
+        if not digit(chars[idx]):
+            return 0
+        left_count = 0
+        j = idx - 1
+        while j >= 0 and digit(chars[j]):
+            left_count += 1
+            j -= 1
+        right_count = 0
+        j = idx + 1
+        while j < n and digit(chars[j]):
+            right_count += 1
+            j += 1
+        return 1 + left_count + right_count
+
     for i in range(n):
         ch = chars[i]
         left = chars[i - 1] if i > 0 else ""
@@ -53,6 +73,13 @@ def fix_latin_ambiguous_chars(text: str) -> str:
         if ch == "1" and not digit(left) and not digit(right):
             if latin_letter(left) or latin_letter(right):
                 chars[i] = "I"
+        elif (
+            ch == "1"
+            and letter_heavy
+            and digit_run_length_at(i) <= 2
+            and (latin_letter(left) or latin_letter(right))
+        ):
+            chars[i] = "I"
         elif ch == "0" and latin_letter(left) and latin_letter(right):
             chars[i] = "O"
         elif ch == "O" and digit(left) and (digit(right) or right == ""):
