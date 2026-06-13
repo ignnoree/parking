@@ -90,6 +90,7 @@
         .pill-registered { background: #dcfce7; color: #166534; }
         .pill-guest { background: #fef9c3; color: #854d0e; }
         .pill-unregistered { background: #fee2e2; color: #991b1b; }
+        .pill-uncertain { background: #fef3c7; color: #92400e; }
         .level-info { background: #e0f2fe; color: #0369a1; }
         .level-warn { background: #fef3c7; color: #92400e; }
         .level-error { background: #fee2e2; color: #991b1b; }
@@ -231,6 +232,7 @@
                             <option value="">All</option>
                             <option value="registered">Registered</option>
                             <option value="unregistered">Unregistered</option>
+                            <option value="uncertain">Uncertain</option>
                         </select>
                     </label>
                     <label>Plate contains<input id="parkingPlate" placeholder="DXB1234"></label>
@@ -398,6 +400,9 @@
         }
 
         function statusPill(row) {
+            if (row.match_status === "uncertain") {
+                return "<span class='pill pill-uncertain'>Uncertain</span>";
+            }
             if (row.match_status === "registered" && row.is_guest) {
                 return "<span class='pill pill-guest'>Guest</span>";
             }

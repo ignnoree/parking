@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Literal
 
 from helpers.plate_cluster import plates_similar
 
@@ -56,6 +57,24 @@ def plate_track_instant_log_confidence() -> float:
 def plate_track_single_log_confidence() -> float:
     """On final OCR attempt, allow a single read at or above this confidence."""
     return max(0.45, min(1.0, float(os.environ.get("PLATE_TRACK_SINGLE_LOG_CONF", "0.72"))))
+
+
+def plate_track_uncertain_conf_min() -> float:
+    """Minimum combined confidence for an uncertain audit log."""
+    return max(0.0, min(1.0, float(os.environ.get("PLATE_TRACK_UNCERTAIN_CONF_MIN", "0.55"))))
+
+
+def plate_track_uncertain_conf_max() -> float:
+    """Exclusive upper bound — reads at/above instant log stay confirmed only."""
+    raw = os.environ.get("PLATE_TRACK_UNCERTAIN_CONF_MAX", "").strip()
+    if raw:
+        return max(0.0, min(1.0, float(raw)))
+    return plate_track_instant_log_confidence()
+
+
+def plate_track_confirmed_min_confidence() -> float:
+    """Multi-vote reads below this log as uncertain instead of unregistered."""
+    return max(0.0, min(1.0, float(os.environ.get("PLATE_TRACK_CONFIRMED_MIN_CONF", "0.70"))))
 
 
 def plate_track_nms_iou() -> float:
@@ -113,6 +132,47 @@ def nms_detections(
     return kept
 
 
+@dataclass(frozen=True)
+class TrackLogDecision:
+    tier: Literal["confirmed", "uncertain"]
+    read: dict
+    reason: str
+
+
+def _read_confidence(read: dict) -> float:
+    return float(read.get("confidence") or 0)
+
+
+def _best_ocr_read(reads: list[dict]) -> dict | None:
+    if not reads:
+        return None
+    return max(reads, key=_read_confidence)
+
+
+def _largest_vote_cluster(reads: list[dict]) -> tuple[list[dict], int]:
+    """Return the largest fuzzy-similar OCR cluster and its size."""
+    clusters: list[list[dict]] = []
+    for read in reads:
+        norm = str(read.get("plate_normalized") or "")
+        if not norm:
+            continue
+        matched = False
+        for cluster in clusters:
+            rep = str(cluster[0].get("plate_normalized") or "")
+            if plates_similar(rep, norm):
+                cluster.append(read)
+                matched = True
+                break
+        if not matched:
+            clusters.append([read])
+
+    if not clusters:
+        return [], 0
+
+    best = max(clusters, key=lambda cluster: (len(cluster), max(_read_confidence(r) for r in cluster)))
+    return best, len(best)
+
+
 @dataclass
 class PlateTrack:
     track_id: int
@@ -126,6 +186,7 @@ class PlateTrack:
     ocr_pending: bool = False
     confirmed: bool = False
     logged: bool = False
+    uncertain_logged: bool = False
     plate_text: str | None = None
     plate_normalized: str | None = None
     confidence: float = 0.0
@@ -239,10 +300,12 @@ class PlateTracker:
         del self._tracks[src_id]
         return True
 
-    def update(self, detections: list[dict], *, now: float) -> list[PlateTrack]:
+    def update(
+        self, detections: list[dict], *, now: float
+    ) -> tuple[list[PlateTrack], list[PlateTrack]]:
         """
         Match detections to tracks, prune stale tracks.
-        Returns tracks that should receive OCR on this update.
+        Returns (tracks needing OCR, expired tracks removed this tick).
         """
         det_boxes = nms_detections([d for d in detections if isinstance(d.get("box"), dict)])
         track_ids = list(self._tracks.keys())
@@ -294,10 +357,12 @@ class PlateTracker:
             for tid, track in self._tracks.items()
             if now - track.last_seen > self.max_age_seconds
         ]
+        expired = [self._tracks[tid] for tid in stale]
         for tid in stale:
             self._tracks.pop(tid, None)
 
-        return [track for track in self._tracks.values() if self._needs_ocr(track, now=now)]
+        need_ocr = [track for track in self._tracks.values() if self._needs_ocr(track, now=now)]
+        return need_ocr, expired
 
     def _needs_ocr(self, track: PlateTrack, *, now: float) -> bool:
         if track.logged or track.ocr_pending:
@@ -316,62 +381,88 @@ class PlateTracker:
             return
         track.ocr_reads.append(dict(read))
 
-    def stable_read_for_logging(self, track_id: int) -> dict | None:
-        """Return best read once track-level vote / confidence gates pass."""
-        track = self._tracks.get(track_id)
-        if track is None or not track.ocr_reads:
+    def resolve_track_log(
+        self,
+        track: PlateTrack,
+        *,
+        on_expiry: bool = False,
+    ) -> TrackLogDecision | None:
+        """
+        Decide whether a track should log as confirmed or uncertain.
+
+        Confirmed (live): instant conf, multi-vote with max conf >= confirmed_min,
+        or final single read >= single_conf when that read is also >= confirmed_min.
+
+        Uncertain (expiry only): vote not met and best read in uncertain band, or
+        multi-vote met with max conf < confirmed_min when the track is dropped.
+        """
+        if track.logged or track.uncertain_logged or not track.ocr_reads:
             return None
 
         vote_count = plate_track_vote_count()
         instant_conf = plate_track_instant_log_confidence()
         single_conf = plate_track_single_log_confidence()
+        uncertain_min = plate_track_uncertain_conf_min()
+        uncertain_max = plate_track_uncertain_conf_max()
+        confirmed_min = plate_track_confirmed_min_confidence()
 
-        def _conf(read: dict) -> float:
-            return float(read.get("confidence") or 0)
+        best_read = _best_ocr_read(track.ocr_reads)
+        if best_read is None:
+            return None
+        best_conf = _read_confidence(best_read)
 
-        best_read = max(track.ocr_reads, key=_conf)
-        if _conf(best_read) >= instant_conf:
-            return best_read
+        cluster, cluster_size = _largest_vote_cluster(track.ocr_reads)
+        cluster_best = _best_ocr_read(cluster) if cluster else best_read
+        cluster_conf = _read_confidence(cluster_best) if cluster_best else 0.0
 
-        from collections import Counter
+        if best_conf >= instant_conf:
+            return TrackLogDecision(tier="confirmed", read=best_read, reason="instant_log")
 
-        norm_counts = Counter(
-            str(read.get("plate_normalized") or "")
-            for read in track.ocr_reads
-            if read.get("plate_normalized")
-        )
-        for norm, count in norm_counts.most_common():
-            if count >= vote_count:
-                matching = [r for r in track.ocr_reads if r.get("plate_normalized") == norm]
-                return max(matching, key=_conf)
-
-        clusters: list[list[dict]] = []
-        for read in track.ocr_reads:
-            norm = str(read.get("plate_normalized") or "")
-            if not norm:
-                continue
-            matched = False
-            for cluster in clusters:
-                rep = str(cluster[0].get("plate_normalized") or "")
-                if plates_similar(rep, norm):
-                    cluster.append(read)
-                    matched = True
-                    break
-            if not matched:
-                clusters.append([read])
-
-        if clusters:
-            clusters.sort(
-                key=lambda cluster: (len(cluster), max(_conf(r) for r in cluster)),
-                reverse=True,
+        if cluster_size >= vote_count and cluster_conf >= confirmed_min:
+            return TrackLogDecision(
+                tier="confirmed",
+                read=cluster_best or best_read,
+                reason="vote_confirmed",
             )
-            best_cluster = clusters[0]
-            if len(best_cluster) >= vote_count:
-                return max(best_cluster, key=_conf)
 
-        if track.ocr_attempts >= self.ocr_max_attempts and _conf(best_read) >= single_conf:
-            return best_read
+        if not on_expiry:
+            if (
+                track.ocr_attempts >= self.ocr_max_attempts
+                and best_conf >= single_conf
+                and best_conf >= confirmed_min
+            ):
+                return TrackLogDecision(tier="confirmed", read=best_read, reason="single_confirmed")
+            return None
+
+        # Track expired — audit weak reads that never confirmed.
+        if (
+            cluster_size >= vote_count
+            and uncertain_min <= cluster_conf < confirmed_min
+        ):
+            return TrackLogDecision(
+                tier="uncertain",
+                read=cluster_best or best_read,
+                reason="expired_vote_uncertain",
+            )
+
+        if cluster_size < vote_count and uncertain_min <= best_conf < uncertain_max:
+            return TrackLogDecision(
+                tier="uncertain",
+                read=best_read,
+                reason="expired_single_uncertain",
+            )
+
         return None
+
+    def stable_read_for_logging(self, track_id: int) -> dict | None:
+        """Return best read once confirmed track-level gates pass."""
+        track = self._tracks.get(track_id)
+        if track is None:
+            return None
+        decision = self.resolve_track_log(track, on_expiry=False)
+        if decision is None or decision.tier != "confirmed":
+            return None
+        return decision.read
 
     def mark_ocr_pending(self, track_id: int, *, now: float) -> None:
         track = self._tracks.get(track_id)
@@ -411,16 +502,20 @@ class PlateTracker:
         track.confidence = confidence
         track.logged = True
 
-    def log_timing(self, track_id: int, *, now: float | None = None) -> dict:
-        """Seconds from first detection to now, plus track OCR stats."""
+    def mark_uncertain_logged(self, track_id: int) -> None:
         track = self._tracks.get(track_id)
         if track is None:
-            return {}
+            return
+        track.uncertain_logged = True
+        track.logged = True
+
+    def log_timing_for_track(self, track: PlateTrack, *, now: float | None = None) -> dict:
+        """Timing stats for a track object (including expired tracks)."""
         end = now if now is not None else time.monotonic()
         started = track.first_seen_at or track.last_seen
         wrap_s = round(max(0.0, end - started), 3)
         timing = {
-            "track_id": track_id,
+            "track_id": track.track_id,
             "wrap_s": wrap_s,
             "detect_to_log_s": wrap_s,
             "ocr_attempts": track.ocr_attempts,
@@ -429,3 +524,10 @@ class PlateTracker:
         if track.first_ocr_queued_at > 0:
             timing["ocr_elapsed_s"] = round(max(0.0, end - track.first_ocr_queued_at), 3)
         return timing
+
+    def log_timing(self, track_id: int, *, now: float | None = None) -> dict:
+        """Seconds from first detection to now, plus track OCR stats."""
+        track = self._tracks.get(track_id)
+        if track is None:
+            return {}
+        return self.log_timing_for_track(track, now=now)

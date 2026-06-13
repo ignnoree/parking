@@ -49,6 +49,8 @@ def flash_logged_plates(plates: list[dict]) -> None:
         status = item.get("match_status") or "unregistered"
         if status == "registered":
             color = "guest" if item.get("is_guest") else "resident"
+        elif status == "uncertain":
+            color = "uncertain"
         else:
             color = "unregistered"
         new_flashes.append(
@@ -84,6 +86,7 @@ def _draw_flashes(frame: np.ndarray, *, scale: float = 1.0) -> np.ndarray:
         "resident": (40, 200, 80),
         "guest": (0, 220, 255),
         "unregistered": (60, 60, 240),
+        "uncertain": (0, 200, 255),
     }
     now = time.monotonic()
     with _lock:

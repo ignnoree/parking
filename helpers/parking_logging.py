@@ -37,6 +37,21 @@ _read_history: collections.deque[tuple[str, datetime.datetime]] = collections.de
 _recent_unregistered_logs: collections.deque[tuple[str, str, datetime.datetime]] = collections.deque(
     maxlen=80
 )
+_recent_uncertain_logs: collections.deque[tuple[str, str, datetime.datetime]] = collections.deque(
+    maxlen=80
+)
+
+
+def parking_log_uncertain_enabled() -> bool:
+    explicit = os.environ.get("PARKING_LOG_UNCERTAIN_ENABLED", "").strip().lower()
+    if explicit:
+        return explicit in {"1", "true", "yes", "on"}
+    return os.environ.get("PARKING_LOG_SKIPPED_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _relpath(path: str) -> str:
@@ -86,6 +101,33 @@ def _jitter_cooldown_active(canonical: str, direction: str, now_utc: datetime.da
             break
         if plates_similar(prev_norm, canonical):
             return True
+    return False
+
+
+def _uncertain_jitter_cooldown_active(canonical: str, direction: str, now_utc: datetime.datetime) -> bool:
+    if PARKING_JITTER_COOLDOWN_SECONDS <= 0:
+        return False
+    window = datetime.timedelta(seconds=PARKING_JITTER_COOLDOWN_SECONDS)
+    for prev_norm, prev_dir, logged_at in reversed(_recent_uncertain_logs):
+        if prev_dir != direction:
+            continue
+        if now_utc - logged_at > window:
+            break
+        if plates_similar(prev_norm, canonical):
+            return True
+    return False
+
+
+def _uncertain_log_cooldown_active(canonical: str, direction: str, now_utc: datetime.datetime) -> bool:
+    """Suppress uncertain when the same car was recently logged (confirmed or uncertain)."""
+    if _uncertain_jitter_cooldown_active(canonical, direction, now_utc):
+        return True
+    if _jitter_cooldown_active(canonical, direction, now_utc):
+        return True
+    key = f"unregistered:{canonical}:{direction}"
+    last = _last_parking_log_at.get(key)
+    if last and (now_utc - last).total_seconds() < parking_log_cooldown_seconds():
+        return True
     return False
 
 
@@ -203,6 +245,8 @@ def log_parking_events_for_results(
             if match_status != "registered":
                 if _jitter_cooldown_active(canonical, direction, now_utc):
                     continue
+                if _uncertain_jitter_cooldown_active(canonical, direction, now_utc):
+                    continue
             last = _last_parking_log_at.get(key)
             if last and (now_utc - last).total_seconds() < parking_log_cooldown_seconds():
                 _read_history.append((canonical, now_utc))
@@ -285,3 +329,93 @@ def log_parking_events_for_results(
             source_frame,
         )
     return logged_plates
+
+
+def log_uncertain_track_event(
+    frame_path: str,
+    *,
+    direction: str,
+    plate_normalized: str,
+    plate_text: str | None = None,
+    confidence: float | None = None,
+    box: dict | None = None,
+    timing: dict | None = None,
+    skip_reason: str | None = None,
+    track_id: int | None = None,
+) -> bool:
+    """
+    Persist a weak-but-readable plate as match_status=uncertain (audit only).
+    Does not bypass jitter cooldown for confirmed logs on the same plate later.
+    """
+    if not parking_log_uncertain_enabled():
+        return False
+
+    norm = str(plate_normalized or "").strip()
+    if not norm:
+        return False
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    canonical = canonical_plate(norm, now_utc)
+    with _lock:
+        _prune_stale_cooldown_keys(now_utc)
+        if _uncertain_log_cooldown_active(canonical, direction, now_utc):
+            logging.debug(
+                "[PARKING_UNCERTAIN] suppressed plate=%s direction=%s reason=log_cooldown",
+                norm,
+                direction,
+            )
+            return False
+
+    scan_id = uuid.uuid4().hex[:12]
+    source_folder, crop_folder = parking_snapshot_dirs(registered=False)
+    source_frame = _persist_source_frame(frame_path, scan_id, source_folder=source_folder)
+    crop_path = _persist_plate_crop(
+        frame_path,
+        box,
+        norm,
+        direction,
+        f"{scan_id}_{uuid.uuid4().hex[:6]}",
+        crop_folder=crop_folder,
+    )
+
+    timing_payload = dict(timing or {})
+    if track_id is not None and "track_id" not in timing_payload:
+        timing_payload["track_id"] = track_id
+    if skip_reason:
+        timing_payload["skip_reason"] = skip_reason
+
+    details = json.dumps(
+        {
+            "canonical_plate": canonical,
+            "source_frame": source_frame,
+            "crop_frame": crop_path,
+            "plate_box": box,
+            "timing": timing_payload,
+            "skip_reason": skip_reason,
+        },
+        ensure_ascii=False,
+    )
+
+    log_parking_event(
+        plate_normalized=norm,
+        plate_number=plate_text or norm,
+        direction=direction,
+        match_status="uncertain",
+        vehicle_id=None,
+        is_guest=False,
+        confidence=confidence,
+        snapshot_path=crop_path or source_frame,
+        details=details,
+    )
+    with _lock:
+        _recent_uncertain_logs.append((canonical, direction, now_utc))
+    logging.info(
+        "[PARKING_UNCERTAIN] plate=%s canonical=%s direction=%s conf=%s reason=%s%s",
+        norm,
+        canonical,
+        direction,
+        confidence,
+        skip_reason or "uncertain",
+        _format_wrap_suffix(timing_payload),
+    )
+    return True

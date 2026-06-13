@@ -25,7 +25,7 @@ from helpers.live_frame_buffer import (
     set_camera_disconnected,
     update_overlay_from_plate_results,
 )
-from helpers.parking_logging import log_parking_events_for_results
+from helpers.parking_logging import log_parking_events_for_results, log_uncertain_track_event
 from helpers.plate_detect_isolated import (
     detect_frame_isolated,
     is_busy,
@@ -34,7 +34,12 @@ from helpers.plate_detect_isolated import (
 )
 from helpers.plate_detect_retries import detect_with_retries
 from helpers.plate_pipeline import build_result_row, plate_debug_logging
-from helpers.plate_tracker import PlateTracker, plate_track_min_hits, plate_tracking_enabled
+from helpers.plate_tracker import (
+    PlateTracker,
+    TrackLogDecision,
+    plate_track_min_hits,
+    plate_tracking_enabled,
+)
 from helpers.light_profile import resolve_light_profile
 from helpers.utils import UPLOAD_TEMP_FOLDER
 
@@ -268,14 +273,96 @@ def _route_results_through_tracker(
     tracker = state.tracker
     now = time.monotonic()
 
+    def _process_expired_track(track) -> dict | None:
+        decision = tracker.resolve_track_log(track, on_expiry=True)
+        if decision is None or decision.tier != "uncertain":
+            return None
+        timing = tracker.log_timing_for_track(track, now=now)
+        logged = log_uncertain_track_event(
+            frame_path,
+            direction=job.direction,
+            plate_normalized=str(decision.read.get("plate_normalized") or ""),
+            plate_text=str(decision.read.get("plate_text") or ""),
+            confidence=float(decision.read.get("confidence") or 0),
+            box=dict(track.box),
+            timing=timing,
+            skip_reason=decision.reason,
+            track_id=track.track_id,
+        )
+        if not logged:
+            return None
+        return {
+            "plate_text": decision.read.get("plate_text") or decision.read.get("plate_normalized"),
+            "plate_normalized": decision.read.get("plate_normalized"),
+            "box": dict(track.box),
+            "match_status": "uncertain",
+            "is_guest": False,
+        }
+
+    def _process_live_decision(track, decision: TrackLogDecision) -> dict | None:
+        timing = tracker.log_timing(track.track_id, now=now)
+        assert decision.tier == "confirmed"
+
+        row = build_result_row(
+            {
+                "plate_text": decision.read.get("plate_text"),
+                "plate_normalized": decision.read.get("plate_normalized"),
+                "confidence": decision.read.get("confidence"),
+                "box": dict(track.box),
+            },
+            direction=job.direction,
+            timing=timing,
+            track_confirmed=True,
+        )
+        if row is None:
+            return None
+
+        payload = {
+            "status": "ok",
+            "direction": job.direction,
+            "plates_detected": 1,
+            "results": [row],
+        }
+        try:
+            logged_plates = log_parking_events_for_results(frame_path, payload)
+        except Exception:
+            logger.exception(
+                "Tracker log persistence failed (camera_id=%s track=%s)",
+                job.camera_id,
+                track.track_id,
+            )
+            return None
+
+        tracker.mark_confirmed(
+            track.track_id,
+            plate_text=str(decision.read.get("plate_text") or ""),
+            plate_normalized=str(decision.read.get("plate_normalized") or ""),
+            confidence=float(decision.read.get("confidence") or 0),
+            logged=True,
+        )
+        if logged_plates:
+            return logged_plates[0]
+        return {
+            "plate_text": decision.read.get("plate_text") or decision.read.get("plate_normalized"),
+            "plate_normalized": decision.read.get("plate_normalized"),
+            "box": dict(track.box),
+            "match_status": row.get("match_status") or "unregistered",
+            "is_guest": bool(row.get("is_guest")),
+        }
+
     # IoU-associate raw detections with active tracks (creates new tracks as needed).
-    tracker.update(
+    _need_ocr, expired_tracks = tracker.update(
         [{"box": r.get("box"), "confidence": r.get("confidence")} for r in raw_results if r.get("box")],
         now=now,
     )
 
-    min_hits = plate_track_min_hits()
     logged_payload: list[dict] = []
+    for track in expired_tracks:
+        overlay_row = _process_expired_track(track)
+        if overlay_row:
+            logged_payload.append(overlay_row)
+
+    min_hits = plate_track_min_hits()
     for det in raw_results:
         box = det.get("box")
         if not isinstance(box, dict):
@@ -343,54 +430,16 @@ def _route_results_through_tracker(
                 track.ocr_attempts,
             )
 
-        stable = tracker.stable_read_for_logging(track.track_id)
-        if stable is None:
+        live_track = tracker.get_track(track.track_id)
+        if live_track is None:
+            continue
+        decision = tracker.resolve_track_log(live_track, on_expiry=False)
+        if decision is None:
             continue
 
-        timing = tracker.log_timing(track.track_id, now=now)
-        row = build_result_row(
-            {
-                "plate_text": stable.get("plate_text"),
-                "plate_normalized": stable.get("plate_normalized"),
-                "confidence": stable.get("confidence"),
-                "box": dict(track.box),
-            },
-            direction=job.direction,
-            timing=timing,
-            track_confirmed=True,
-        )
-        if row is None:
-            continue
-
-        payload = {
-            "status": "ok",
-            "direction": job.direction,
-            "plates_detected": 1,
-            "results": [row],
-        }
-        try:
-            # wrap_s is already embedded in row["timing"] from tracker.log_timing,
-            # so parking_logging will keep it instead of recomputing from a per-frame anchor.
-            logged_plates = log_parking_events_for_results(frame_path, payload)
-        except Exception:
-            logger.exception(
-                "Tracker log persistence failed (camera_id=%s track=%s)",
-                job.camera_id,
-                track.track_id,
-            )
-            continue
-
-        # Either way (logged OR cooldown-suppressed) mark the track confirmed so
-        # subsequent frames of the same car stop re-running through the voting path.
-        tracker.mark_confirmed(
-            track.track_id,
-            plate_text=str(stable.get("plate_text") or ""),
-            plate_normalized=str(stable.get("plate_normalized") or ""),
-            confidence=float(stable.get("confidence") or 0),
-            logged=True,
-        )
-        if logged_plates:
-            logged_payload.extend(logged_plates)
+        overlay_row = _process_live_decision(live_track, decision)
+        if overlay_row:
+            logged_payload.append(overlay_row)
 
     if not logged_payload:
         return None

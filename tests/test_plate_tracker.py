@@ -34,11 +34,12 @@ def test_nms_drops_overlapping_boxes():
 def test_tracker_assigns_new_ids():
     tracker = PlateTracker(iou_threshold=0.3, max_age_seconds=2.0)
     box = [{"box": {"x": 0, "y": 0, "w": 50, "h": 20}, "confidence": 0.9}]
-    first = tracker.update(box, now=1.0)
+    first, expired = tracker.update(box, now=1.0)
+    assert not expired
     assert len(first) == 1
     assert first[0].track_id == 1
 
-    second = tracker.update(
+    second, _expired = tracker.update(
         [{"box": {"x": 2, "y": 1, "w": 50, "h": 20}, "confidence": 0.88}],
         now=1.1,
     )
@@ -48,7 +49,7 @@ def test_tracker_assigns_new_ids():
 
 def test_tracker_separates_two_plates():
     tracker = PlateTracker(iou_threshold=0.3, max_age_seconds=2.0)
-    need = tracker.update(
+    need, _ = tracker.update(
         [
             {"box": {"x": 0, "y": 0, "w": 40, "h": 20}, "confidence": 0.9},
             {"box": {"x": 200, "y": 0, "w": 40, "h": 20}, "confidence": 0.91},
@@ -106,12 +107,12 @@ def test_tracker_retries_ocr_until_confirmed():
         ocr_interval_seconds=0.5,
     )
     box = {"box": {"x": 0, "y": 0, "w": 40, "h": 20}, "confidence": 0.9}
-    assert len(tracker.update([box], now=0.0)) == 1
+    assert len(tracker.update([box], now=0.0)[0]) == 1
     tracker.mark_ocr_pending(1, now=0.0)
-    assert len(tracker.update([box], now=0.2)) == 0
+    assert len(tracker.update([box], now=0.2)[0]) == 0
     tracker.mark_ocr_finished(1)
-    assert len(tracker.update([box], now=0.2)) == 0
-    assert len(tracker.update([box], now=0.6)) == 1
+    assert len(tracker.update([box], now=0.2)[0]) == 0
+    assert len(tracker.update([box], now=0.6)[0]) == 1
     tracker.mark_confirmed(
         1,
         plate_text="AB12CDE",
@@ -119,7 +120,7 @@ def test_tracker_retries_ocr_until_confirmed():
         confidence=0.8,
         logged=True,
     )
-    assert len(tracker.update([box], now=0.7)) == 0
+    assert len(tracker.update([box], now=0.7)[0]) == 0
 
 
 def test_tracker_drops_stale_tracks():
@@ -128,7 +129,8 @@ def test_tracker_drops_stale_tracks():
         [{"box": {"x": 0, "y": 0, "w": 40, "h": 20}, "confidence": 0.9}],
         now=0.0,
     )
-    tracker.update([], now=1.0)
+    _, expired = tracker.update([], now=1.0)
+    assert len(expired) == 1
     assert tracker.active_tracks() == []
 
 
@@ -256,3 +258,43 @@ def test_merge_into_noop_when_ids_match_or_missing():
     assert tracker.merge_into(1, 999) is False
     assert tracker.merge_into(999, 1) is False
     assert tracker.get_track(1) is not None
+
+
+def test_tracker_weak_double_vote_waits_for_expiry_or_confirm(monkeypatch):
+    monkeypatch.setenv("PLATE_TRACK_INSTANT_LOG_CONF", "0.85")
+    monkeypatch.setenv("PLATE_TRACK_CONFIRMED_MIN_CONF", "0.70")
+    monkeypatch.setenv("PLATE_TRACK_UNCERTAIN_CONF_MIN", "0.55")
+    tracker = PlateTracker(iou_threshold=0.3, max_age_seconds=2.0)
+    tracker.update([{"box": {"x": 0, "y": 0, "w": 40, "h": 20}, "confidence": 0.9}], now=0.0)
+    read = {"plate_normalized": "LMI3VCV", "plate_text": "LMI3VCV", "confidence": 0.65}
+    tracker.record_ocr_read(1, read)
+    tracker.record_ocr_read(1, read)
+    track = tracker.get_track(1)
+    assert track is not None
+    assert tracker.resolve_track_log(track, on_expiry=False) is None
+    assert tracker.stable_read_for_logging(1) is None
+
+    _, expired = tracker.update([], now=3.0)
+    assert len(expired) == 1
+    decision = tracker.resolve_track_log(expired[0], on_expiry=True)
+    assert decision is not None
+    assert decision.tier == "uncertain"
+    assert decision.reason == "expired_vote_uncertain"
+
+
+def test_tracker_uncertain_on_expired_single_read(monkeypatch):
+    monkeypatch.setenv("PLATE_TRACK_INSTANT_LOG_CONF", "0.85")
+    monkeypatch.setenv("PLATE_TRACK_UNCERTAIN_CONF_MIN", "0.55")
+    monkeypatch.setenv("PLATE_TRACK_UNCERTAIN_CONF_MAX", "0.85")
+    tracker = PlateTracker(iou_threshold=0.3, max_age_seconds=0.5)
+    tracker.update([{"box": {"x": 0, "y": 0, "w": 40, "h": 20}, "confidence": 0.9}], now=0.0)
+    tracker.record_ocr_read(
+        1,
+        {"plate_normalized": "LMI3VCV", "plate_text": "LMI3VCV", "confidence": 0.67},
+    )
+    _, expired = tracker.update([], now=1.0)
+    assert len(expired) == 1
+    decision = tracker.resolve_track_log(expired[0], on_expiry=True)
+    assert decision is not None
+    assert decision.tier == "uncertain"
+    assert decision.reason == "expired_single_uncertain"

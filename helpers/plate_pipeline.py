@@ -58,6 +58,7 @@ def build_result_row(
     *,
     direction: str,
     timing: dict | None = None,
+    match_status: str | None = None,
     track_confirmed: bool = False,
 ) -> dict | None:
     """Shape one plate detection for parking_logging (track or legacy pipeline)."""
@@ -84,7 +85,15 @@ def build_result_row(
         row["timing"] = dict(timing)
     if track_confirmed:
         row["track_confirmed"] = True
-    if vehicle:
+    if match_status:
+        row.update(
+            {
+                "match_status": match_status,
+                "vehicle_id": None,
+                "is_guest": False,
+            }
+        )
+    elif vehicle:
         row.update(
             {
                 "match_status": "registered",

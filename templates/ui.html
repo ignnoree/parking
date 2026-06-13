@@ -78,6 +78,7 @@
         .pill-registered { background: #1e4d2b; color: #7dffa8; }
         .pill-guest { background: #4d3a1e; color: #ffcc7d; }
         .pill-unregistered { background: #4d1e1e; color: #ff9e9e; }
+        .pill-uncertain { background: #4d3a1e; color: #ffcc7d; }
         .pagination {
             display: flex;
             align-items: center;
@@ -158,6 +159,7 @@
         .legend-resident::before { background: #22c55e; }
         .legend-guest::before { background: #eab308; }
         .legend-unknown::before { background: #ef4444; }
+        .legend-uncertain::before { background: #eab308; }
     </style>
 </head>
 <body>
@@ -216,6 +218,7 @@
                 <span class="legend-resident">Registered</span>
                 <span class="legend-guest">Guest</span>
                 <span class="legend-unknown">Unregistered</span>
+                <span class="legend-uncertain">Uncertain</span>
             </div>
         </section>
     </main>
@@ -262,6 +265,9 @@
         }
 
         function statusPill(row) {
+            if (row.match_status === "uncertain") {
+                return "<span class='pill pill-uncertain'>Uncertain</span>";
+            }
             if (row.match_status === "registered" && row.is_guest) {
                 return "<span class='pill pill-guest'>Guest</span>";
             }
