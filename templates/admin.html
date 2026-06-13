@@ -249,12 +249,13 @@
                             <th>Direction</th>
                             <th>Status</th>
                             <th>Conf.</th>
-                            <th>Snapshot</th>
+                            <th>Plate crop</th>
+                            <th>Full frame</th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody id="parkingLogsBody">
-                        <tr><td colspan="6" class="muted">Loading…</td></tr>
+                        <tr><td colspan="8" class="muted">Loading…</td></tr>
                     </tbody>
                 </table>
                 <div class="btn-row">
@@ -412,10 +413,16 @@
             return "<span class='badge " + cls + "'>" + escapeHtml(lv || "—") + "</span>";
         }
 
-        function snapshotCell(row) {
+        function cropSnapshotCell(row) {
             if (!row.snapshot_url) return "—";
-            return "<a href='" + escapeHtml(row.snapshot_url) + "' target='_blank' rel='noopener'>" +
-                "<img class='thumb' src='" + escapeHtml(row.snapshot_url) + "' alt='' loading='lazy'></a>";
+            return "<a href='" + escapeHtml(row.snapshot_url) + "' target='_blank' rel='noopener' title='Plate crop'>" +
+                "<img class='thumb' src='" + escapeHtml(row.snapshot_url) + "' alt='Plate crop' loading='lazy'></a>";
+        }
+
+        function fullSnapshotCell(row) {
+            if (!row.source_snapshot_url) return "—";
+            return "<a href='" + escapeHtml(row.source_snapshot_url) + "' target='_blank' rel='noopener' title='Full frame'>" +
+                "<img class='thumb' src='" + escapeHtml(row.source_snapshot_url) + "' alt='Full frame' loading='lazy'></a>";
         }
 
         async function apiFetch(url, options = {}) {
@@ -579,7 +586,7 @@
             parkingPage = page;
             const body = document.getElementById("parkingLogsBody");
             const pageInfo = document.getElementById("parkingPageInfo");
-            body.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
+            body.innerHTML = '<tr><td colspan="8" class="muted">Loading…</td></tr>';
             const data = await apiFetch(parkingQuery(page));
             const rows = data.logs || [];
             document.getElementById("parkingPrevBtn").disabled = !data.has_prev;
@@ -587,7 +594,7 @@
             pageInfo.textContent = `Page ${data.page || page} · ${data.total ?? 0} total`;
 
             if (!rows.length) {
-                body.innerHTML = '<tr><td colspan="6" class="muted">No parking logs match filters.</td></tr>';
+                body.innerHTML = '<tr><td colspan="8" class="muted">No parking logs match filters.</td></tr>';
                 return;
             }
             body.innerHTML = rows.map((r) => (
@@ -597,7 +604,8 @@
                 "<td>" + directionPill(r.direction) + "</td>" +
                 "<td>" + statusPill(r) + "</td>" +
                 "<td>" + (r.confidence != null ? Number(r.confidence).toFixed(2) : "—") + "</td>" +
-                "<td>" + snapshotCell(r) + "</td>" +
+                "<td>" + cropSnapshotCell(r) + "</td>" +
+                "<td>" + fullSnapshotCell(r) + "</td>" +
                 "<td><button type='button' class='small danger' data-del-log='" + r.id + "'>Hide</button></td>" +
                 "</tr>"
             )).join("");

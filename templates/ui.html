@@ -222,9 +222,11 @@
 
     <script>
         const PAGE_SIZE = 10;
+        const LOGS_REFRESH_MS = 5000;
         let currentPage = 1;
         let liveOpen = false;
         let statusTimer = null;
+        let logsRefreshTimer = null;
 
         const logsBody = document.getElementById("logsBody");
         const logsMeta = document.getElementById("logsMeta");
@@ -283,10 +285,13 @@
             );
         }
 
-        async function loadLogs(page) {
+        async function loadLogs(page, opts = {}) {
+            const silent = opts.silent === true;
             currentPage = page;
-            logsMeta.textContent = "Loading…";
-            logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Loading…</td></tr>";
+            if (!silent) {
+                logsMeta.textContent = "Loading…";
+                logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Loading…</td></tr>";
+            }
 
             try {
                 const res = await fetch(
@@ -305,7 +310,7 @@
                 const total = data.total ?? rows.length;
                 const pageNum = data.page ?? page;
 
-                logsMeta.textContent = total + " total events";
+                logsMeta.textContent = total + " total events · auto-refresh 5s";
                 pageInfo.textContent = "Page " + pageNum + " · " + rows.length + " shown";
                 prevBtn.disabled = !data.has_prev;
                 nextBtn.disabled = !data.has_next;
@@ -326,8 +331,10 @@
                     "</tr>"
                 )).join("");
             } catch (_) {
-                logsMeta.textContent = "Failed to load logs.";
-                logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Network error.</td></tr>";
+                if (!silent) {
+                    logsMeta.textContent = "Failed to load logs.";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Network error.</td></tr>";
+                }
             }
         }
 
@@ -435,7 +442,15 @@
         });
         hideLiveBtn.addEventListener("click", stopLiveStream);
 
+        function startLogsAutoRefresh() {
+            if (logsRefreshTimer) clearInterval(logsRefreshTimer);
+            logsRefreshTimer = setInterval(() => {
+                loadLogs(currentPage, { silent: true });
+            }, LOGS_REFRESH_MS);
+        }
+
         loadLogs(1);
+        startLogsAutoRefresh();
     </script>
 </body>
 </html>
