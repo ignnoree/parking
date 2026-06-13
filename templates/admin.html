@@ -168,13 +168,12 @@
                             <th>Source</th>
                             <th>Gate</th>
                             <th>Light</th>
-                            <th>Detect (s)</th>
                             <th>Status</th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody id="camerasBody">
-                        <tr><td colspan="8" class="muted">Loading…</td></tr>
+                        <tr><td colspan="7" class="muted">Loading…</td></tr>
                     </tbody>
                 </table>
 
@@ -203,7 +202,6 @@
                             <option value="low_light">low_light</option>
                         </select>
                     </label>
-                    <label>Detection interval (s)<input id="frame_interval_seconds" type="number" min="0.5" step="0.1" placeholder="1.0" title="How often to run plate OCR — does not affect live preview FPS"></label>
                     <label>Enabled
                         <select id="is_enabled">
                             <option value="true">Yes</option>
@@ -461,7 +459,7 @@
 
         function renderCameras(cameras) {
             if (!cameras.length) {
-                camerasBody.innerHTML = '<tr><td colspan="8" class="muted">No cameras configured.</td></tr>';
+                camerasBody.innerHTML = '<tr><td colspan="7" class="muted">No cameras configured.</td></tr>';
                 return;
             }
             camerasBody.innerHTML = cameras.map(c => `
@@ -471,7 +469,6 @@
                     <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.source)}</td>
                     <td>${escapeHtml(c.gate_role)}</td>
                     <td>${escapeHtml(c.light_profile)}</td>
-                    <td>${c.frame_interval_seconds ?? "default"}</td>
                     <td><span class="badge ${c.is_enabled ? "badge-on" : "badge-off"}">${c.is_enabled ? "On" : "Off"}</span></td>
                     <td>
                         <button type="button" class="small secondary" data-edit="${c.id}">Edit</button>
@@ -546,7 +543,6 @@
             const byKey = {};
             (data.settings || []).forEach((row) => { byKey[row.key] = row.value; });
             const labels = {
-                CAMERA_FRAME_INTERVAL_SECONDS: "Scan interval (seconds)",
                 PARKING_LOG_COOLDOWN_SECONDS: "Log cooldown (seconds)",
                 light_profile_global: "Global light profile",
             };
@@ -660,7 +656,6 @@
                     <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(camera.source)}</td>
                     <td>${escapeHtml(camera.gate_role)}</td>
                     <td>${escapeHtml(camera.light_profile)}</td>
-                    <td>${camera.frame_interval_seconds ?? "default"}</td>
                     <td><span class="badge ${camera.is_enabled ? "badge-on" : "badge-off"}">${camera.is_enabled ? "On" : "Off"}</span></td>
                     <td>
                         <button type="button" class="small secondary" data-edit="${camera.id}">Edit</button>
@@ -700,7 +695,6 @@
                 document.getElementById("source").value = cam.source;
                 document.getElementById("gate_role").value = cam.gate_role;
                 document.getElementById("light_profile").value = cam.light_profile;
-                document.getElementById("frame_interval_seconds").value = cam.frame_interval_seconds ?? "";
                 document.getElementById("is_enabled").value = cam.is_enabled ? "true" : "false";
                 formTitle.textContent = "Edit camera";
                 cancelEditBtn.style.display = "inline-block";
@@ -723,7 +717,6 @@
         document.getElementById("saveBtn").addEventListener("click", async () => {
             clearMessage();
             const id = document.getElementById("cameraId").value;
-            const intervalRaw = document.getElementById("frame_interval_seconds").value.trim();
             const payload = {
                 name: document.getElementById("name").value.trim(),
                 protocol: document.getElementById("protocol").value,
@@ -732,7 +725,6 @@
                 light_profile: document.getElementById("light_profile").value,
                 is_enabled: document.getElementById("is_enabled").value === "true",
             };
-            if (intervalRaw) payload.frame_interval_seconds = parseFloat(intervalRaw);
             try {
                 if (id) {
                     const res = await apiFetch("/api/cameras/" + id, { method: "PATCH", body: JSON.stringify(payload) });

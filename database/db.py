@@ -10,7 +10,7 @@ try:
 except ImportError:
     pass
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.inspection import inspect as sa_inspect
 
@@ -51,8 +51,16 @@ def session_scope():
         session.close()
 
 
+def _apply_schema_migrations() -> None:
+    """One-off cleanups for settings/columns removed from the ORM."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE cameras DROP COLUMN IF EXISTS frame_interval_seconds"))
+        conn.execute(text("DELETE FROM settings WHERE key = 'CAMERA_FRAME_INTERVAL_SECONDS'"))
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _apply_schema_migrations()
 
 
 def reset_db() -> None:

@@ -195,11 +195,7 @@ def _config_from_row(row: dict) -> CameraConfig | None:
     source = parse_camera_source(row["protocol"], row["source"])
     if source is None:
         return None
-    interval = row.get("frame_interval_seconds")
-    if interval is None:
-        interval = default_frame_interval()
-    else:
-        interval = max(0.5, float(interval))
+    interval = default_frame_interval()
     return CameraConfig(
         id=int(row["id"]),
         name=str(row.get("name") or f"Camera {row['id']}"),

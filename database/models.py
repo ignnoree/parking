@@ -86,7 +86,6 @@ class Camera(Base):
     source: Mapped[str] = mapped_column(String(512))
     gate_role: Mapped[str] = mapped_column(String(16), server_default="entry", default="entry")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    frame_interval_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     light_profile: Mapped[str] = mapped_column(String(32), server_default="normal", default="normal")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

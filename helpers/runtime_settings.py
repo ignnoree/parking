@@ -7,6 +7,7 @@ Admin PATCH /api/settings updates apply live (cached ~2s; cleared on write).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Callable, TypeVar
@@ -89,7 +90,12 @@ def get_runtime_int(setting_key: str, default: int) -> int:
 
 
 def camera_frame_interval_seconds() -> float:
-    return max(0.5, get_runtime_float("CAMERA_FRAME_INTERVAL_SECONDS", 0.5))
+    """Seconds between plate scans — env only (CAMERA_FRAME_INTERVAL_SECONDS, default 0.5)."""
+    raw = os.environ.get("CAMERA_FRAME_INTERVAL_SECONDS", "0.5").strip()
+    try:
+        return max(0.5, float(raw))
+    except (TypeError, ValueError):
+        return 0.5
 
 
 def parking_log_cooldown_seconds() -> int:

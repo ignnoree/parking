@@ -89,7 +89,6 @@ def insert_camera(
     source: str,
     gate_role: str = "entry",
     is_enabled: bool = True,
-    frame_interval_seconds: float | None = None,
     light_profile: str = "normal",
 ) -> int | None:
     protocol = protocol.strip().lower()
@@ -115,7 +114,6 @@ def insert_camera(
             source=source.strip(),
             gate_role=gate_role,
             is_enabled=is_enabled,
-            frame_interval_seconds=frame_interval_seconds,
             light_profile=light_profile,
         )
         session.add(row)
@@ -130,7 +128,6 @@ def update_camera(camera_id: int, **fields) -> bool:
         "source",
         "gate_role",
         "is_enabled",
-        "frame_interval_seconds",
         "light_profile",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -160,13 +157,6 @@ def update_camera(camera_id: int, **fields) -> bool:
         updates["source"] = str(updates["source"]).strip()
         if not updates["source"]:
             return False
-    if "frame_interval_seconds" in updates:
-        val = updates["frame_interval_seconds"]
-        if val is None or val == "":
-            updates["frame_interval_seconds"] = None
-        else:
-            updates["frame_interval_seconds"] = max(0.5, float(val))
-
     with session_scope() as session:
         row = session.get(Camera, camera_id)
         if row is None:

@@ -136,7 +136,6 @@ def main() -> None:
         "CAMERA_URL": "✓",
         "GATE_DIRECTION": "✓",
         "PLATE_USE_GPU": "⬜",
-        "CAMERA_FRAME_INTERVAL_SECONDS": "✓",
         "PARKING_LOG_COOLDOWN_SECONDS": "✓",
         "GUEST_RETENTION_DAYS": "✓",
         "PLATE_OCR_MIN_CONFIDENCE": "✓",

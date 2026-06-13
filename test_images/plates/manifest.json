@@ -1,0 +1,15 @@
+{
+  "description": "Full-frame parking log sources copied from uploads/unknown_parking_logs/sources. Expected plates are ground truth for OCR regression. crops/ holds single-plate annotated crops from the same session.",
+  "video": "plate_test9.mp4",
+  "fixtures": [
+    {"image": "AP05JEO.jpg", "expected": "AP05JEO", "logged": "AP05JEO"},
+    {"image": "EY61NBG.jpg", "expected": "EY61NBG", "logged": "EY6INBG"},
+    {"image": "FJI4ZHY.jpg", "expected": "FJI4ZHY", "logged": "FJI4ZHY"},
+    {"image": "GXI5OGJ.jpg", "expected": "GXI5OGJ", "logged": "GXI5OGJ"},
+    {"image": "KH05ZZK.jpg", "expected": "KH05ZZK", "logged": "KM05ZZK"},
+    {"image": "LMI3VCV.jpg", "expected": "LMI3VCV", "logged": "LMI3VCV"},
+    {"image": "MW3IVSU.jpg", "expected": "MW3IVSU", "logged": "MW3IVSU"},
+    {"image": "NAI3NRU.jpg", "expected": "NAI3NRU", "logged": "NAI3NRU"},
+    {"image": "WR02FKD.jpg", "expected": "WR02FKD", "logged": "WR02FKD"}
+  ]
+}

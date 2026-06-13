@@ -155,7 +155,6 @@ def cameras_create_api():
         source=source,
         gate_role=str(data.get("gate_role") or "entry").strip().lower(),
         is_enabled=bool(data.get("is_enabled", True)),
-        frame_interval_seconds=data.get("frame_interval_seconds"),
         light_profile=str(data.get("light_profile") or "normal").strip().lower(),
     )
     if camera_id is None:
@@ -248,8 +247,6 @@ def settings_update_api(key: str):
     if not isinstance(payload, dict):
         payload = {"value": payload}
     set_setting(key, payload)
-    if key == "CAMERA_FRAME_INTERVAL_SECONDS":
-        reload_cameras()
     return jsonify({"status": "ok", "setting": {"key": key, "value": get_setting(key)}})
 
 

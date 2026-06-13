@@ -9,14 +9,12 @@ from database.models import Setting
 
 # Keys editable from admin panel (values stored as JSON-compatible dicts).
 BOOTSTRAP_KEYS = (
-    "CAMERA_FRAME_INTERVAL_SECONDS",
     "PARKING_LOG_COOLDOWN_SECONDS",
     "light_profile_global",
 )
 
 # Seeded into PostgreSQL on first start; runtime reads DB only (not .env).
 DEFAULT_SETTINGS: dict[str, dict] = {
-    "CAMERA_FRAME_INTERVAL_SECONDS": {"value": "1.0"},
     "PARKING_LOG_COOLDOWN_SECONDS": {"value": "600"},
     "light_profile_global": {"value": "normal"},
 }
