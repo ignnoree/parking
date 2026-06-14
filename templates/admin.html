@@ -248,6 +248,7 @@
                         <tr>
                             <th>Time</th>
                             <th>Plate</th>
+                            <th>Color</th>
                             <th>Direction</th>
                             <th>Status</th>
                             <th>Conf.</th>
@@ -257,7 +258,7 @@
                         </tr>
                     </thead>
                     <tbody id="parkingLogsBody">
-                        <tr><td colspan="8" class="muted">Loading…</td></tr>
+                        <tr><td colspan="9" class="muted">Loading…</td></tr>
                     </tbody>
                 </table>
                 <div class="btn-row">
@@ -392,6 +393,11 @@
         function formatTime(iso) {
             if (!iso) return "—";
             try { return new Date(iso).toLocaleString(); } catch (_) { return iso; }
+        }
+
+        function plateColorLabel(color) {
+            if (!color || color === "unknown") return "—";
+            return String(color).charAt(0).toUpperCase() + String(color).slice(1);
         }
 
         function directionPill(dir) {
@@ -599,13 +605,14 @@
             pageInfo.textContent = `Page ${data.page || page} · ${data.total ?? 0} total`;
 
             if (!rows.length) {
-                body.innerHTML = '<tr><td colspan="8" class="muted">No parking logs match filters.</td></tr>';
+                body.innerHTML = '<tr><td colspan="9" class="muted">No parking logs match filters.</td></tr>';
                 return;
             }
             body.innerHTML = rows.map((r) => (
                 "<tr>" +
                 "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
                 "<td class='mono'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
+                "<td>" + escapeHtml(plateColorLabel(r.plate_color)) + "</td>" +
                 "<td>" + directionPill(r.direction) + "</td>" +
                 "<td>" + statusPill(r) + "</td>" +
                 "<td>" + (r.confidence != null ? Number(r.confidence).toFixed(2) : "—") + "</td>" +

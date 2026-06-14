@@ -6,8 +6,11 @@ import datetime
 import logging
 import os
 
+import cv2
+
 from database.vehicles_db import find_vehicle_by_normalized
 from helpers.plate_alpr import alpr_init_error, get_alpr, ocr_confidence_value
+from helpers.plate_color import detect_plate_color_from_frame
 from helpers.plate_format import clean_plate_ocr_text, is_plausible_plate, plate_format_score
 from helpers.plate_normalize import normalize_plate
 
@@ -81,6 +84,8 @@ def build_result_row(
         "confidence": conf,
         "box": det.get("box"),
     }
+    if det.get("plate_color"):
+        row["plate_color"] = str(det.get("plate_color"))
     if timing:
         row["timing"] = dict(timing)
     if track_confirmed:
@@ -130,6 +135,8 @@ def detect_plates_in_image(image_path: str) -> list[dict]:
         logger.exception("Plate detection failed for %s", image_path)
         return []
 
+    frame = cv2.imread(image_path)
+
     if plate_debug_logging():
         logger.info("Plate scan %s: %s raw detection(s)", image_path, len(alpr_results))
 
@@ -163,24 +170,28 @@ def detect_plates_in_image(image_path: str) -> list[dict]:
 
         bbox = result.detection.bounding_box
         x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
+        box = {"x": x1, "y": y1, "w": max(0, x2 - x1), "h": max(0, y2 - y1)}
+        plate_color = detect_plate_color_from_frame(frame, box) if frame is not None else "unknown"
 
         detections.append(
             {
                 "plate_text": plate_text,
                 "plate_normalized": normalize_plate(plate_text),
                 "confidence": confidence,
-                "box": {"x": x1, "y": y1, "w": max(0, x2 - x1), "h": max(0, y2 - y1)},
+                "box": box,
+                "plate_color": plate_color,
             }
         )
         if plate_debug_logging():
             logger.info(
-                "Plate accepted: raw=%r fixed=%r det=%.2f ocr=%.2f fmt=%.2f conf=%.2f",
+                "Plate accepted: raw=%r fixed=%r det=%.2f ocr=%.2f fmt=%.2f conf=%.2f color=%s",
                 raw_text,
                 plate_text,
                 det_conf,
                 ocr_conf,
                 fmt_score,
                 confidence,
+                plate_color,
             )
 
     if plate_debug_logging() and not detections:
@@ -216,6 +227,8 @@ def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
             "confidence": conf,
             "box": det.get("box"),
         }
+        if det.get("plate_color"):
+            row["plate_color"] = det.get("plate_color")
         if vehicle:
             row.update(
                 {

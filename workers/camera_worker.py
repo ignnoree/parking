@@ -288,6 +288,7 @@ def _route_results_through_tracker(
             timing=timing,
             skip_reason=decision.reason,
             track_id=track.track_id,
+            plate_color=str(decision.read.get("plate_color") or "") or None,
         )
         if not logged:
             return None
@@ -309,6 +310,7 @@ def _route_results_through_tracker(
                 "plate_normalized": decision.read.get("plate_normalized"),
                 "confidence": decision.read.get("confidence"),
                 "box": dict(track.box),
+                "plate_color": decision.read.get("plate_color"),
             },
             direction=job.direction,
             timing=timing,
@@ -415,6 +417,7 @@ def _route_results_through_tracker(
                 "plate_text": det.get("plate_text"),
                 "plate_normalized": det.get("plate_normalized"),
                 "confidence": det.get("confidence"),
+                "plate_color": det.get("plate_color"),
             },
         )
         tracker.mark_ocr_finished(track.track_id)

@@ -441,6 +441,7 @@ def parking_logs_api():
                 meta = json.loads(raw_details)
                 if isinstance(meta, dict):
                     source_path = meta.get("source_frame")
+                    row["plate_color"] = meta.get("plate_color")
             except json.JSONDecodeError:
                 pass
         row["source_snapshot_url"] = (

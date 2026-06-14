@@ -283,6 +283,7 @@ def log_parking_events_for_results(
                 "source_frame": source_frame,
                 "crop_frame": crop_path,
                 "plate_box": item.get("box"),
+                "plate_color": item.get("plate_color"),
                 "plates_in_frame": len(results),
                 "timing": timing,
             },
@@ -308,16 +309,18 @@ def log_parking_events_for_results(
                 "box": item.get("box"),
                 "match_status": match_status,
                 "is_guest": bool(item.get("is_guest")),
+                "plate_color": item.get("plate_color"),
             }
         )
         logging.info(
-            "[PARKING_LOGGED] plate=%s canonical=%s direction=%s status=%s vehicle_id=%s conf=%s%s",
+            "[PARKING_LOGGED] plate=%s canonical=%s direction=%s status=%s vehicle_id=%s conf=%s color=%s%s",
             norm,
             canonical,
             direction,
             match_status,
             vehicle_id,
             item.get("confidence"),
+            item.get("plate_color") or "—",
             _format_wrap_suffix(timing),
         )
 
@@ -342,6 +345,7 @@ def log_uncertain_track_event(
     timing: dict | None = None,
     skip_reason: str | None = None,
     track_id: int | None = None,
+    plate_color: str | None = None,
 ) -> bool:
     """
     Persist a weak-but-readable plate as match_status=uncertain (audit only).
@@ -390,6 +394,7 @@ def log_uncertain_track_event(
             "source_frame": source_frame,
             "crop_frame": crop_path,
             "plate_box": box,
+            "plate_color": plate_color,
             "timing": timing_payload,
             "skip_reason": skip_reason,
         },
@@ -410,11 +415,12 @@ def log_uncertain_track_event(
     with _lock:
         _recent_uncertain_logs.append((canonical, direction, now_utc))
     logging.info(
-        "[PARKING_UNCERTAIN] plate=%s canonical=%s direction=%s conf=%s reason=%s%s",
+        "[PARKING_UNCERTAIN] plate=%s canonical=%s direction=%s conf=%s color=%s reason=%s%s",
         norm,
         canonical,
         direction,
         confidence,
+        plate_color or "—",
         skip_reason or "uncertain",
         _format_wrap_suffix(timing_payload),
     )
