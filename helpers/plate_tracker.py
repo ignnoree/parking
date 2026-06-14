@@ -149,6 +149,20 @@ def _best_ocr_read(reads: list[dict]) -> dict | None:
     return max(reads, key=_read_confidence)
 
 
+def box_for_log(read: dict | None, track: "PlateTrack | None" = None) -> dict | None:
+    """Prefer the detection box captured with the OCR read, not the track's latest IoU box."""
+    if isinstance(read, dict):
+        box = read.get("box")
+        if isinstance(box, dict):
+            w = int(box.get("w") or 0)
+            h = int(box.get("h") or 0)
+            if w > 0 and h > 0:
+                return dict(box)
+    if track is not None:
+        return dict(track.box)
+    return None
+
+
 def _largest_vote_cluster(reads: list[dict]) -> tuple[list[dict], int]:
     """Return the largest fuzzy-similar OCR cluster and its size."""
     clusters: list[list[dict]] = []
@@ -186,7 +200,6 @@ class PlateTrack:
     ocr_pending: bool = False
     confirmed: bool = False
     logged: bool = False
-    uncertain_logged: bool = False
     plate_text: str | None = None
     plate_normalized: str | None = None
     confidence: float = 0.0
@@ -396,7 +409,7 @@ class PlateTracker:
         Uncertain (expiry only): vote not met and best read in uncertain band, or
         multi-vote met with max conf < confirmed_min when the track is dropped.
         """
-        if track.logged or track.uncertain_logged or not track.ocr_reads:
+        if track.logged or not track.ocr_reads:
             return None
 
         vote_count = plate_track_vote_count()
@@ -500,13 +513,6 @@ class PlateTracker:
         track.plate_text = plate_text
         track.plate_normalized = plate_normalized
         track.confidence = confidence
-        track.logged = True
-
-    def mark_uncertain_logged(self, track_id: int) -> None:
-        track = self._tracks.get(track_id)
-        if track is None:
-            return
-        track.uncertain_logged = True
         track.logged = True
 
     def log_timing_for_track(self, track: PlateTrack, *, now: float | None = None) -> dict:

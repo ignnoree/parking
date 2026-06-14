@@ -49,6 +49,7 @@ from database.admin_db import (
 )
 from helpers.rbac import get_current_admin, require_admin_roles
 from helpers.plate_normalize import normalize_plate
+from helpers.parking_logging import parking_log_details_meta
 from helpers.live_frame_buffer import get_frame_sequence, get_stream_status, wait_for_new_jpeg
 from helpers.utils import UPLOAD_FOLDER, COLLECTION_FOLDER
 from workers.camera_worker import get_worker_status, reload_cameras
@@ -434,16 +435,9 @@ def parking_logs_api():
     for row in logs:
         snap = row.get("snapshot_path")
         row["snapshot_url"] = f"/api/parking-snapshot?path={quote(str(snap))}" if snap else None
-        source_path = None
-        raw_details = row.get("details")
-        if raw_details:
-            try:
-                meta = json.loads(raw_details)
-                if isinstance(meta, dict):
-                    source_path = meta.get("source_frame")
-                    row["plate_color"] = meta.get("plate_color")
-            except json.JSONDecodeError:
-                pass
+        meta = parking_log_details_meta(row.get("details"))
+        row["plate_color"] = meta.get("plate_color")
+        source_path = meta.get("source_frame")
         row["source_snapshot_url"] = (
             f"/api/parking-snapshot?path={quote(str(source_path))}" if source_path else None
         )

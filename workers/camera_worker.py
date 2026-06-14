@@ -37,6 +37,7 @@ from helpers.plate_pipeline import build_result_row, plate_debug_logging
 from helpers.plate_tracker import (
     PlateTracker,
     TrackLogDecision,
+    box_for_log,
     plate_track_min_hits,
     plate_tracking_enabled,
 )
@@ -167,12 +168,12 @@ def _clear_latest_frame() -> None:
 
 
 def _preview_target_fps(cap: cv2.VideoCapture, *, file_source: bool) -> float:
-    target_fps = live_stream_max_fps()
+    """Frame pacing for the drainer loop. File sources play at native video FPS."""
     if file_source:
         video_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
-        if video_fps >= 10.0:
-            target_fps = min(target_fps, video_fps)
-    return max(1.0, target_fps)
+        if video_fps >= 5.0:
+            return min(60.0, max(5.0, video_fps))
+    return max(1.0, live_stream_max_fps())
 
 
 def _rewind_capture(cap: cv2.VideoCapture) -> bool:
@@ -252,6 +253,22 @@ def _remove_temp_file(path: str) -> None:
         logger.debug("Failed to remove temp frame %s", path, exc_info=True)
 
 
+def _logged_overlay_row(
+    *,
+    read: dict,
+    box: dict,
+    match_status: str,
+    is_guest: bool = False,
+) -> dict:
+    return {
+        "plate_text": read.get("plate_text") or read.get("plate_normalized"),
+        "plate_normalized": read.get("plate_normalized"),
+        "box": dict(box),
+        "match_status": match_status,
+        "is_guest": is_guest,
+    }
+
+
 def _route_results_through_tracker(
     *,
     job: _DetectJob,
@@ -284,7 +301,7 @@ def _route_results_through_tracker(
             plate_normalized=str(decision.read.get("plate_normalized") or ""),
             plate_text=str(decision.read.get("plate_text") or ""),
             confidence=float(decision.read.get("confidence") or 0),
-            box=dict(track.box),
+            box=box_for_log(decision.read, track) or dict(track.box),
             timing=timing,
             skip_reason=decision.reason,
             track_id=track.track_id,
@@ -292,24 +309,23 @@ def _route_results_through_tracker(
         )
         if not logged:
             return None
-        return {
-            "plate_text": decision.read.get("plate_text") or decision.read.get("plate_normalized"),
-            "plate_normalized": decision.read.get("plate_normalized"),
-            "box": dict(track.box),
-            "match_status": "uncertain",
-            "is_guest": False,
-        }
+        return _logged_overlay_row(
+            read=decision.read,
+            box=box_for_log(decision.read, track) or dict(track.box),
+            match_status="uncertain",
+        )
 
     def _process_live_decision(track, decision: TrackLogDecision) -> dict | None:
+        if decision.tier != "confirmed":
+            return None
         timing = tracker.log_timing(track.track_id, now=now)
-        assert decision.tier == "confirmed"
-
+        log_box = box_for_log(decision.read, track) or dict(track.box)
         row = build_result_row(
             {
                 "plate_text": decision.read.get("plate_text"),
                 "plate_normalized": decision.read.get("plate_normalized"),
                 "confidence": decision.read.get("confidence"),
-                "box": dict(track.box),
+                "box": log_box,
                 "plate_color": decision.read.get("plate_color"),
             },
             direction=job.direction,
@@ -344,13 +360,12 @@ def _route_results_through_tracker(
         )
         if logged_plates:
             return logged_plates[0]
-        return {
-            "plate_text": decision.read.get("plate_text") or decision.read.get("plate_normalized"),
-            "plate_normalized": decision.read.get("plate_normalized"),
-            "box": dict(track.box),
-            "match_status": row.get("match_status") or "unregistered",
-            "is_guest": bool(row.get("is_guest")),
-        }
+        return _logged_overlay_row(
+            read=decision.read,
+            box=log_box,
+            match_status=row.get("match_status") or "unregistered",
+            is_guest=bool(row.get("is_guest")),
+        )
 
     # IoU-associate raw detections with active tracks (creates new tracks as needed).
     _need_ocr, expired_tracks = tracker.update(
@@ -418,6 +433,7 @@ def _route_results_through_tracker(
                 "plate_normalized": det.get("plate_normalized"),
                 "confidence": det.get("confidence"),
                 "plate_color": det.get("plate_color"),
+                "box": dict(box),
             },
         )
         tracker.mark_ocr_finished(track.track_id)

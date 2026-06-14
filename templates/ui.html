@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Parking monitor</title>
+    <script src="/static/parking_ui.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -188,7 +189,7 @@
                     <tr>
                         <th>Time</th>
                         <th>Plate</th>
-                        <th>Color</th>
+                        <th>Plate color</th>
                         <th>Direction</th>
                         <th>Status</th>
                         <th>Guest</th>
@@ -258,11 +259,6 @@
                 .replaceAll("<", "&lt;")
                 .replaceAll(">", "&gt;")
                 .replaceAll('"', "&quot;");
-        }
-
-        function plateColorLabel(color) {
-            if (!color || color === "unknown") return "—";
-            return String(color).charAt(0).toUpperCase() + String(color).slice(1);
         }
 
         function directionPill(dir) {

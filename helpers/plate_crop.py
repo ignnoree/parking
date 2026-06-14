@@ -72,6 +72,20 @@ def crop_ocr_plate(frame_bgr: np.ndarray, tight_box: dict | None) -> np.ndarray 
     return frame_bgr[y1:y2, x1:x2].copy()
 
 
+def crop_tight_plate(frame_bgr: np.ndarray, box: dict | None) -> np.ndarray | None:
+    """Crop the detector box only — no OCR/snapshot padding (for plate-background analysis)."""
+    if frame_bgr is None or frame_bgr.size == 0 or not box:
+        return None
+    fh, fw = frame_bgr.shape[:2]
+    x1 = max(0, int(box.get("x", 0)))
+    y1 = max(0, int(box.get("y", 0)))
+    x2 = min(fw, x1 + max(1, int(box.get("w", 0))))
+    y2 = min(fh, y1 + max(1, int(box.get("h", 0))))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return frame_bgr[y1:y2, x1:x2].copy()
+
+
 def expand_plate_box(
     box: dict | None,
     frame_width: int,

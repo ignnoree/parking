@@ -42,6 +42,17 @@ _recent_uncertain_logs: collections.deque[tuple[str, str, datetime.datetime]] = 
 )
 
 
+def parking_log_details_meta(details: str | None) -> dict:
+    """Parse parking_logs.details JSON safely."""
+    if not details:
+        return {}
+    try:
+        meta = json.loads(details)
+        return meta if isinstance(meta, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
 def parking_log_uncertain_enabled() -> bool:
     explicit = os.environ.get("PARKING_LOG_UNCERTAIN_ENABLED", "").strip().lower()
     if explicit:

@@ -298,3 +298,23 @@ def test_tracker_uncertain_on_expired_single_read(monkeypatch):
     assert decision is not None
     assert decision.tier == "uncertain"
     assert decision.reason == "expired_single_uncertain"
+
+
+def test_box_for_log_prefers_read_box_over_track_box():
+    from helpers.plate_tracker import PlateTrack, box_for_log
+
+    track = PlateTrack(
+        track_id=1,
+        box={"x": 500, "y": 200, "w": 120, "h": 40},
+        det_conf=0.7,
+        hits=2,
+        last_seen=1.0,
+    )
+    read = {
+        "plate_normalized": "FJI4ZHY",
+        "confidence": 0.76,
+        "box": {"x": 10, "y": 20, "w": 100, "h": 30},
+    }
+    assert box_for_log(read, track) == read["box"]
+    assert box_for_log({"plate_normalized": "X", "confidence": 0.5}, track) == track.box
+    assert box_for_log(None, track) == track.box

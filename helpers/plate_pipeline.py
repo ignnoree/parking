@@ -84,8 +84,11 @@ def build_result_row(
         "confidence": conf,
         "box": det.get("box"),
     }
-    if det.get("plate_color"):
-        row["plate_color"] = str(det.get("plate_color"))
+    plate_color = det.get("plate_color")
+    if plate_color:
+        row["plate_color"] = str(plate_color)
+    elif "plate_color" in det:
+        row["plate_color"] = "unknown"
     if timing:
         row["timing"] = dict(timing)
     if track_confirmed:
@@ -203,50 +206,12 @@ def detect_plates_in_image(image_path: str) -> list[dict]:
 def run_plate_detect_on_file(image_path: str, *, direction: str) -> dict:
     """Full check: detect plates, match vehicles, shape for parking_logging."""
     detections = detect_plates_in_image(image_path)
-    min_conf = plate_ocr_min_confidence()
     results: list[dict] = []
 
     for det in detections:
-        conf = float(det.get("confidence") or 0)
-        if conf < min_conf:
-            if plate_debug_logging():
-                logger.info(
-                    "Plate below confidence gate: %r conf=%.2f min=%.2f",
-                    det.get("plate_text"),
-                    conf,
-                    min_conf,
-                )
-            continue
-        norm = det.get("plate_normalized") or normalize_plate(det.get("plate_text"))
-        if not norm:
-            continue
-        vehicle = _lookup_vehicle(norm)
-        row = {
-            "plate_text": det.get("plate_text") or norm,
-            "plate_normalized": norm,
-            "confidence": conf,
-            "box": det.get("box"),
-        }
-        if det.get("plate_color"):
-            row["plate_color"] = det.get("plate_color")
-        if vehicle:
-            row.update(
-                {
-                    "match_status": "registered",
-                    "vehicle_id": vehicle["id"],
-                    "is_guest": bool(vehicle.get("is_guest")),
-                    "owner_name": vehicle.get("owner_name"),
-                }
-            )
-        else:
-            row.update(
-                {
-                    "match_status": "unregistered",
-                    "vehicle_id": None,
-                    "is_guest": False,
-                }
-            )
-        results.append(row)
+        row = build_result_row(det, direction=direction)
+        if row is not None:
+            results.append(row)
 
     payload = {
         "status": "ok",

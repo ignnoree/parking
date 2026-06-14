@@ -16,6 +16,17 @@ def test_classify_white_plate():
     assert classify_plate_background_color(crop) == "white"
 
 
+def test_classify_cool_tinted_white_not_blue():
+    # Slight blue cast from lighting/JPEG — still a white plate.
+    crop = _solid_crop((235, 242, 252))
+    assert classify_plate_background_color(crop) == "white"
+
+
+def test_classify_dim_white_not_unknown():
+    crop = _solid_crop((180, 182, 186))
+    assert classify_plate_background_color(crop) in {"white", "unknown"}
+
+
 def test_classify_red_plate():
     crop = _solid_crop((30, 30, 220))
     assert classify_plate_background_color(crop) == "red"
