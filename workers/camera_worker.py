@@ -344,16 +344,31 @@ def _route_results_through_tracker(
         box = det.get("box")
         if not isinstance(box, dict):
             continue
-        track = tracker.track_for_box(box)
-        if track is None:
-            continue
+        plate_norm = str(det.get("plate_normalized") or "").strip()
+        det_conf = float(det.get("confidence") or 0)
+        track = tracker.track_for_box(box, exclude_logged=True)
+        orphan_reason: str | None = None
+        if track is not None and plate_norm and not tracker.track_accepts_plate(track, plate_norm):
+            orphan_reason = "plate_mismatch"
+            track = tracker.create_orphan_track(box, confidence=det_conf, now=now)
+        elif track is None:
+            orphan_reason = "no_iou_track"
+            track = tracker.create_orphan_track(box, confidence=det_conf, now=now)
+        if orphan_reason and plate_debug_logging():
+            logger.info(
+                "[TRACKER] cam=%s %s track=%s text=%r conf=%.2f",
+                job.camera_id,
+                orphan_reason,
+                track.track_id,
+                plate_norm,
+                det_conf,
+            )
 
         # OCR-similarity association: if the IoU pass landed on a brand-new
         # track (no reads yet) and another active track has similar OCR text,
         # merge into that track instead. This catches the case where a moving
         # car between scans doesn't overlap its previous box but has a
         # recognizably-similar plate read.
-        plate_norm = str(det.get("plate_normalized") or "").strip()
         if (
             not track.ocr_reads
             and not track.logged

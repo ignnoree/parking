@@ -47,6 +47,54 @@ def test_tracker_assigns_new_ids():
     assert second[0].track_id == 1
 
 
+def test_track_for_box_can_exclude_logged_tracks():
+    tracker = PlateTracker(iou_threshold=0.12, max_age_seconds=10.0)
+    box = {"x": 10, "y": 10, "w": 80, "h": 24}
+    tracker.update([{"box": box, "confidence": 0.9}], now=0.0)
+    logged_track = tracker.get_track(1)
+    assert logged_track is not None
+    tracker.mark_confirmed(
+        1,
+        plate_text="GXI5OGJ",
+        plate_normalized="GXI5OGJ",
+        confidence=0.75,
+        logged=True,
+    )
+    assert tracker.track_for_box(box) is logged_track
+    assert tracker.track_for_box(box, exclude_logged=True) is None
+    orphan = tracker.ensure_track_for_box(box, confidence=0.64, now=0.1)
+    assert orphan.track_id == 2
+    assert not orphan.logged
+
+
+def test_track_accepts_plate_rejects_different_neighbor():
+    tracker = PlateTracker(iou_threshold=0.12, max_age_seconds=10.0)
+    shared_box = {"x": 10, "y": 10, "w": 80, "h": 24}
+    tracker.update([{"box": shared_box, "confidence": 0.9}], now=0.0)
+    tracker.record_ocr_read(
+        1,
+        {"plate_normalized": "MW5IVSU", "plate_text": "MW5IVSU", "confidence": 0.74},
+    )
+    mw_track = tracker.get_track(1)
+    assert mw_track is not None
+    assert tracker.track_accepts_plate(mw_track, "MW5IVSU")
+    assert not tracker.track_accepts_plate(mw_track, "NAI3NRU")
+    orphan = tracker.create_orphan_track(shared_box, confidence=0.68, now=0.1)
+    assert orphan.track_id == 2
+    tracker.record_ocr_read(
+        2,
+        {"plate_normalized": "NAI3NRU", "plate_text": "NAI3NRU", "confidence": 0.71},
+    )
+    tracker.record_ocr_read(
+        2,
+        {"plate_normalized": "NAI3NRU", "plate_text": "NAI3NRU", "confidence": 0.72},
+    )
+    decision = tracker.resolve_track_log(orphan, on_expiry=False)
+    assert decision is not None
+    assert decision.tier == "confirmed"
+    assert decision.read["plate_normalized"] == "NAI3NRU"
+
+
 def test_tracker_separates_two_plates():
     tracker = PlateTracker(iou_threshold=0.3, max_age_seconds=2.0)
     need, _ = tracker.update(

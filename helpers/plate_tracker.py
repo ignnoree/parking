@@ -233,17 +233,67 @@ class PlateTracker:
         box: dict,
         *,
         iou_threshold: float | None = None,
+        exclude_logged: bool = False,
     ) -> PlateTrack | None:
         """Find an active track whose last box overlaps `box` above the IoU gate."""
         threshold = self.iou_threshold if iou_threshold is None else iou_threshold
         best: tuple[float, PlateTrack] | None = None
         for track in self._tracks.values():
+            if exclude_logged and track.logged:
+                continue
             iou = box_iou(track.box, box)
             if iou < threshold:
                 continue
             if best is None or iou > best[0]:
                 best = (iou, track)
         return best[1] if best else None
+
+    def track_accepts_plate(self, track: PlateTrack, plate_normalized: str) -> bool:
+        """True when `plate_normalized` belongs on this track (empty track or fuzzy match)."""
+        if not plate_normalized:
+            return True
+        if track.plate_normalized and plates_similar(track.plate_normalized, plate_normalized):
+            return True
+        if not track.ocr_reads:
+            return True
+        for read in track.ocr_reads:
+            other = str(read.get("plate_normalized") or "")
+            if other and plates_similar(other, plate_normalized):
+                return True
+        return False
+
+    def create_orphan_track(
+        self,
+        box: dict,
+        *,
+        confidence: float,
+        now: float,
+    ) -> PlateTrack:
+        """Create a dedicated track for an OCR read that cannot use an existing track."""
+        tid = self._next_id
+        self._next_id += 1
+        track = PlateTrack(
+            track_id=tid,
+            box=dict(box),
+            det_conf=float(confidence or 0),
+            last_seen=now,
+            first_seen_at=now,
+        )
+        self._tracks[tid] = track
+        return track
+
+    def ensure_track_for_box(
+        self,
+        box: dict,
+        *,
+        confidence: float,
+        now: float,
+    ) -> PlateTrack:
+        """Return an unlogged IoU-matched track, or create one for an orphan OCR box."""
+        track = self.track_for_box(box, exclude_logged=True)
+        if track is not None:
+            return track
+        return self.create_orphan_track(box, confidence=confidence, now=now)
 
     def track_for_ocr_text(
         self,
