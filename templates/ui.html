@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Parking monitor</title>
-    <script src="/static/parking_ui.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -189,7 +188,6 @@
                     <tr>
                         <th>Time</th>
                         <th>Plate</th>
-                        <th>Plate color</th>
                         <th>Direction</th>
                         <th>Status</th>
                         <th>Guest</th>
@@ -197,7 +195,7 @@
                     </tr>
                 </thead>
                 <tbody id="logsBody">
-                    <tr><td class="muted" colspan="7">Loading…</td></tr>
+                    <tr><td class="muted" colspan="6">Loading…</td></tr>
                 </tbody>
             </table>
             <div class="pagination">
@@ -308,7 +306,7 @@
                 );
                 if (res.status === 401) {
                     logsMeta.textContent = "Log in required.";
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Please <a href='/login' style='color:#7eb8ff'>log in</a>.</td></tr>";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Please <a href='/login' style='color:#7eb8ff'>log in</a>.</td></tr>";
                     prevBtn.disabled = true;
                     nextBtn.disabled = true;
                     return;
@@ -324,7 +322,7 @@
                 nextBtn.disabled = !data.has_next;
 
                 if (!rows.length) {
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>No parking logs yet.</td></tr>";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>No parking logs yet.</td></tr>";
                     return;
                 }
 
@@ -332,7 +330,6 @@
                     "<tr>" +
                     "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
                     "<td class='mono'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
-                    "<td>" + escapeHtml(plateColorLabel(r.plate_color)) + "</td>" +
                     "<td>" + directionPill(r.direction) + "</td>" +
                     "<td>" + statusPill(r) + "</td>" +
                     "<td>" + (r.is_guest ? "Yes" : "—") + "</td>" +
@@ -342,7 +339,7 @@
             } catch (_) {
                 if (!silent) {
                     logsMeta.textContent = "Failed to load logs.";
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Network error.</td></tr>";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Network error.</td></tr>";
                 }
             }
         }
