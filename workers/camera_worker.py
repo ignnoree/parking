@@ -23,7 +23,6 @@ from helpers.lighting_monitor import note_plate_scan
 from helpers.live_frame_buffer import (
     publish_frame,
     set_camera_disconnected,
-    update_overlay_from_plate_results,
 )
 from helpers.parking_logging import log_parking_events_for_results, log_uncertain_track_event
 from helpers.plate_detect_isolated import (
@@ -253,49 +252,28 @@ def _remove_temp_file(path: str) -> None:
         logger.debug("Failed to remove temp frame %s", path, exc_info=True)
 
 
-def _logged_overlay_row(
-    *,
-    read: dict,
-    box: dict,
-    match_status: str,
-    is_guest: bool = False,
-) -> dict:
-    return {
-        "plate_text": read.get("plate_text") or read.get("plate_normalized"),
-        "plate_normalized": read.get("plate_normalized"),
-        "box": dict(box),
-        "match_status": match_status,
-        "is_guest": is_guest,
-    }
-
-
 def _route_results_through_tracker(
     *,
     job: _DetectJob,
     frame_path: str,
     result: dict,
     runtime: _WorkerRuntime,
-) -> dict | None:
-    """
-    Feed the OCR result through the per-camera tracker for multi-frame voting.
-
-    Returns a synthetic payload of just the *logged* plate(s) so the overlay
-    only highlights confirmed reads (and only once per car).
-    """
+) -> None:
+    """Feed the OCR result through the per-camera tracker for multi-frame voting."""
     if not isinstance(result, dict) or result.get("status") != "ok":
-        return None
+        return
 
     raw_results = [r for r in (result.get("results") or []) if isinstance(r, dict)]
     state = runtime.track_state_for(job.camera_id)
     tracker = state.tracker
     now = time.monotonic()
 
-    def _process_expired_track(track) -> dict | None:
+    def _process_expired_track(track) -> None:
         decision = tracker.resolve_track_log(track, on_expiry=True)
         if decision is None or decision.tier != "uncertain":
-            return None
+            return
         timing = tracker.log_timing_for_track(track, now=now)
-        logged = log_uncertain_track_event(
+        log_uncertain_track_event(
             frame_path,
             direction=job.direction,
             plate_normalized=str(decision.read.get("plate_normalized") or ""),
@@ -307,17 +285,10 @@ def _route_results_through_tracker(
             track_id=track.track_id,
             plate_color=str(decision.read.get("plate_color") or "") or None,
         )
-        if not logged:
-            return None
-        return _logged_overlay_row(
-            read=decision.read,
-            box=box_for_log(decision.read, track) or dict(track.box),
-            match_status="uncertain",
-        )
 
-    def _process_live_decision(track, decision: TrackLogDecision) -> dict | None:
+    def _process_live_decision(track, decision: TrackLogDecision) -> None:
         if decision.tier != "confirmed":
-            return None
+            return
         timing = tracker.log_timing(track.track_id, now=now)
         log_box = box_for_log(decision.read, track) or dict(track.box)
         row = build_result_row(
@@ -333,7 +304,7 @@ def _route_results_through_tracker(
             track_confirmed=True,
         )
         if row is None:
-            return None
+            return
 
         payload = {
             "status": "ok",
@@ -342,14 +313,14 @@ def _route_results_through_tracker(
             "results": [row],
         }
         try:
-            logged_plates = log_parking_events_for_results(frame_path, payload)
+            log_parking_events_for_results(frame_path, payload)
         except Exception:
             logger.exception(
                 "Tracker log persistence failed (camera_id=%s track=%s)",
                 job.camera_id,
                 track.track_id,
             )
-            return None
+            return
 
         tracker.mark_confirmed(
             track.track_id,
@@ -358,14 +329,6 @@ def _route_results_through_tracker(
             confidence=float(decision.read.get("confidence") or 0),
             logged=True,
         )
-        if logged_plates:
-            return logged_plates[0]
-        return _logged_overlay_row(
-            read=decision.read,
-            box=log_box,
-            match_status=row.get("match_status") or "unregistered",
-            is_guest=bool(row.get("is_guest")),
-        )
 
     # IoU-associate raw detections with active tracks (creates new tracks as needed).
     _need_ocr, expired_tracks = tracker.update(
@@ -373,11 +336,8 @@ def _route_results_through_tracker(
         now=now,
     )
 
-    logged_payload: list[dict] = []
     for track in expired_tracks:
-        overlay_row = _process_expired_track(track)
-        if overlay_row:
-            logged_payload.append(overlay_row)
+        _process_expired_track(track)
 
     min_hits = plate_track_min_hits()
     for det in raw_results:
@@ -456,19 +416,7 @@ def _route_results_through_tracker(
         if decision is None:
             continue
 
-        overlay_row = _process_live_decision(live_track, decision)
-        if overlay_row:
-            logged_payload.append(overlay_row)
-
-    if not logged_payload:
-        return None
-    return {
-        "status": "ok",
-        "direction": job.direction,
-        "plates_detected": len(logged_payload),
-        "results": logged_payload,
-        "logged_plates": logged_payload,
-    }
+        _process_live_decision(live_track, decision)
 
 
 def _run_plate_detect_on_frame(job: _DetectJob) -> None:
@@ -501,17 +449,12 @@ def _run_plate_detect_on_frame(job: _DetectJob) -> None:
             )
             note_plate_scan(light_profile=profile, plates_logged=plates_detected)
 
-            overlay_payload = _route_results_through_tracker(
+            _route_results_through_tracker(
                 job=job,
                 frame_path=path,
                 result=result if isinstance(result, dict) else {},
                 runtime=_runtime,
             )
-            if overlay_payload and job.camera_id == _runtime.primary_camera_id:
-                update_overlay_from_plate_results(job.frame.shape, overlay_payload)
-        else:
-            if result and _runtime and job.camera_id == _runtime.primary_camera_id:
-                update_overlay_from_plate_results(job.frame.shape, result)
     finally:
         # Tracker mode keeps the file alive across the child call; we always
         # clean it up here so per-frame temp files cannot leak.

@@ -2,6 +2,8 @@
 
 The server-side camera worker (`workers/camera_worker.py`) captures frames, runs plate OCR in an isolated child process, and persists parking logs.
 
+For the full capture → OCR → tracker → log flow with code references, see [plate_pipeline_flow.md](plate_pipeline_flow.md).
+
 ## Architecture
 
 ```

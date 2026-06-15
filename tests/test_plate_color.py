@@ -22,9 +22,14 @@ def test_classify_cool_tinted_white_not_blue():
     assert classify_plate_background_color(crop) == "white"
 
 
-def test_classify_dim_white_not_unknown():
-    crop = _solid_crop((180, 182, 186))
-    assert classify_plate_background_color(crop) in {"white", "unknown"}
+def test_classify_blue_plate():
+    crop = _solid_crop((220, 80, 40))
+    assert classify_plate_background_color(crop) == "blue"
+
+
+def test_classify_dim_white_plates():
+    for bgr in ((180, 182, 186), (245, 245, 245)):
+        assert classify_plate_background_color(_solid_crop(bgr)) == "white"
 
 
 def test_classify_red_plate():

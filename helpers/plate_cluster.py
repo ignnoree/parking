@@ -13,7 +13,7 @@ _cluster_canonicals: collections.deque[tuple[str, datetime.datetime]] = collecti
 
 
 def plate_cluster_ttl_seconds() -> int:
-    return max(60, int(os.environ.get("PLATE_CLUSTER_TTL_SECONDS", "600")))
+    return max(60, int(os.environ.get("PLATE_CLUSTER_TTL_SECONDS", "120")))
 
 
 def _edit_distance(a: str, b: str) -> int:

@@ -1,386 +1,321 @@
-# Plate pipeline: capture to parking log
+# Frame capture to parking log
 
-This document explains what happens from the moment the camera captures a frame until a car is written to the parking log. Each step references the source files and functions involved.
-
-For worker configuration and troubleshooting, see [camera_worker.md](camera_worker.md). For admin UI and camera setup, see [admin_guide.md](admin_guide.md).
+End-to-end flow from app startup until a vehicle is written to `parking_logs`. For worker config and troubleshooting see [camera_worker.md](camera_worker.md).
 
 ---
 
-## Summary
+## Overview
 
-1. The app starts background workers when it boots.
-2. A **drainer thread** reads video from each enabled camera continuously.
-3. On a timer (`frame_interval_seconds`), one frame is queued for plate detection.
-4. A **detect thread** saves the frame and sends it to an **isolated OCR child process**.
-5. **YOLO** finds plate boxes; **OCR** reads text; **format filters** reject garbage; the **vehicle DB** is checked.
-6. With tracking enabled (default), a **per-camera tracker** votes across multiple frames before logging.
-7. **Parking logging** applies cooldowns, saves snapshot images, writes PostgreSQL, and prints `[PARKING_LOGGED]` with timing.
-
----
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph startup [App startup]
-        M[main.py] --> CW[start_camera_worker_thread]
-    end
-
-    subgraph capture [Per camera — workers/camera_worker.py]
-        D[Drainer thread] -->|every frame| PV[Preview thread → live UI]
-        D -->|every N seconds| Q[Detect queue]
-    end
-
-    subgraph detect [Detect thread]
-        Q --> JPG[Save temp JPEG]
-        JPG --> ISO[plate_detect_isolated.py — child process]
-    end
-
-    subgraph ocr [OCR child — helpers/plate_worker_pipeline.py]
-        ISO --> PP[plate_pipeline.py]
-        PP --> YOLO[YOLO detect plate box]
-        YOLO --> OCR[OCR read text]
-        OCR --> FMT[plate_format.py validate]
-        FMT --> VDB[vehicles_db lookup]
-    end
-
-    subgraph track [Tracker mode — default]
-        VDB --> TR[plate_tracker.py vote]
-        TR -->|confirmed| PL[parking_logging.py]
-    end
-
-    subgraph legacy [Legacy mode — PLATE_TRACKING_ENABLED=false]
-        VDB --> PL2[parking_logging.py direct]
-    end
-
-    PL --> DB[(PostgreSQL parking_logs)]
-    PL --> IMG[uploads/known|unknown_parking_logs/]
+```
+main.py
+  └─ start_camera_worker_thread()
+       workers/camera_worker.py
+         ├─ drainer thread (per camera)     → reads video, enqueues scan jobs
+         ├─ detect thread                   → OCR + tracker + log
+         ├─ preview thread                  → MJPEG live stream
+         └─ helpers/plate_detect_isolated.py (child process) → YOLO + OCR
+              └─ helpers/plate_worker_pipeline.py → helpers/plate_pipeline.py
 ```
 
----
+**Two processes:** Flask + camera threads run in the **main process**. Heavy ML runs in a **child process** (`plate-ocr-worker`) so inference does not block the web server or camera capture.
 
-## File map
-
-| Role | File | Main entry points |
-|------|------|-------------------|
-| App bootstrap | `main.py` | `start_background_workers()` |
-| Camera + threads | `workers/camera_worker.py` | `_drainer_loop`, `_detect_worker_loop`, `_run_plate_detect_on_frame`, `_route_results_through_tracker` |
-| Isolated OCR process | `helpers/plate_detect_isolated.py` | `detect_frame_isolated`, `_worker_loop` |
-| Detect wrapper | `helpers/plate_worker_pipeline.py` | `run_plate_detect_on_file_obj` |
-| YOLO + OCR per frame | `helpers/plate_pipeline.py` | `detect_plates_in_image`, `run_plate_detect_on_file`, `build_result_row` |
-| ALPR engine | `helpers/plate_alpr.py` | `get_alpr`, OCR backends |
-| Format / normalize | `helpers/plate_format.py`, `helpers/plate_normalize.py` | `is_plausible_plate`, `normalize_plate` |
-| Multi-frame voting | `helpers/plate_tracker.py` | `PlateTracker.update`, `stable_read_for_logging`, `log_timing` |
-| Log persistence | `helpers/parking_logging.py` | `log_parking_events_for_results` |
-| DB write | `database/logs_db.py` | `log_parking_event` |
-| Vehicle lookup | `database/vehicles_db.py` | `find_vehicle_by_normalized` |
-| Live overlay | `helpers/live_frame_buffer.py` | `update_overlay_from_plate_results`, `publish_frame` |
-| Snapshot cleanup | `helpers/snapshot_retention.py` | background purge of old crop/source files |
+**Tracker mode (default):** OCR returns reads only; the main process votes across frames, then logs. **Legacy mode** (`PLATE_TRACKING_ENABLED=false`): the child logs directly on each scan.
 
 ---
 
-## Step 1 — Application startup
+## 1. Startup
 
-When the Flask app starts, it launches guest expiry and the camera worker:
+`main.py` starts background workers when the app boots:
 
 ```python
 # main.py
-def start_background_workers() -> None:
-    purge_expired_guest_vehicles()
-    start_guest_expiry_thread()
-    start_camera_worker_thread()
+start_camera_worker_thread()
 ```
 
-The OCR child process is **not** started here; it starts lazily on the first plate scan (`ensure_started()` in `helpers/plate_detect_isolated.py`).
+`start_camera_worker_thread()` (`workers/camera_worker.py` ~802) loads enabled cameras from PostgreSQL via `load_camera_configs()` and calls `_start_runtime()`.
+
+`_start_runtime()` creates `_WorkerRuntime` in memory:
+
+| Object | Purpose |
+|--------|---------|
+| `detect_queue` | Thread-safe queue of `_DetectJob` (max size `CAMERA_DETECT_QUEUE_SIZE`, default 4) |
+| `drainer_threads` | One thread per camera — reads RTSP/USB/file |
+| `detect_thread` | Consumes queue, runs `_run_plate_detect_on_frame` |
+| `preview_thread` | Encodes `_latest_frame` → MJPEG |
+| `track_states[camera_id]` | Per-camera `PlateTracker` for multi-frame voting |
+
+The OCR child process starts **lazily** on the first scan (`ensure_started()` in `helpers/plate_detect_isolated.py`).
 
 ---
 
-## Step 2 — Load cameras and start threads
+## 2. Frame capture and job creation
 
-`start_camera_worker_thread()` loads enabled cameras from PostgreSQL and calls `_start_runtime()`:
+Each **drainer thread** (`_drainer_loop`, `workers/camera_worker.py` ~574) opens the camera with OpenCV and reads frames in a loop.
 
-```python
-# workers/camera_worker.py — load_camera_configs()
-for row in list_cameras(enabled_only=True):
-    cfg = _config_from_row(row)
+- Every frame → primary camera updates `_latest_frame` for live preview.
+- Every `frame_interval_seconds` → one frame is queued for plate detection.
+
+```652:660:workers/camera_worker.py
+            _enqueue_detect(
+                _DetectJob(
+                    frame=frame.copy(),
+                    camera_id=config.id,
+                    direction=config.gate_role,
+                    light_profile=config.light_profile,
+                ),
+                detect_queue,
+            )
 ```
 
-`_start_runtime()` starts three kinds of threads:
+**`_DetectJob`** holds a **copy** of the frame (numpy array in RAM) plus `camera_id`, `direction` (entry/exit), and `light_profile`.
 
-| Thread | Function | Purpose |
-|--------|----------|---------|
-| Preview | `_preview_publisher_loop` | MJPEG / live view (`helpers/live_frame_buffer.py`) |
-| Detect | `_detect_worker_loop` | Processes queued scan frames |
-| Drainer (×N cameras) | `_drainer_loop` | Reads video; enqueues scans |
+`_enqueue_detect()` puts the job on `detect_queue`. If the queue is full, it drops the **oldest** job so newer frames are still processed.
 
-Per-camera fields from the DB: `source`, `gate_role` (entry/exit), `light_profile`, `frame_interval_seconds`.
+The **detect thread** (`_detect_worker_loop` ~539) blocks on `detect_queue.get()` and calls `_run_plate_detect_on_frame(job)`.
 
 ---
 
-## Step 3 — Capture frames (drainer)
+## 3. Save frame and run OCR
 
-The drainer opens the camera with OpenCV (`_open_capture`) and reads frames in a loop.
+`_run_plate_detect_on_frame` (`workers/camera_worker.py` ~474):
 
-For RTSP/HTTP streams, `_read_drainer_burst` reads multiple frames and keeps the **latest** to reduce latency from buffered video:
+1. Writes `job.frame` to `uploads/temp/camera_{id}_{uuid}.jpg`
+2. Calls `detect_with_retries(detect_frame_isolated, ...)` (`helpers/plate_detect_retries.py`)
 
-```python
-# workers/camera_worker.py — _read_drainer_burst()
-for _ in range(_buffer_drain_reads()):
-    ok, frame = cap.read()
-    if ok and frame is not None:
-        latest_ok, latest = True, frame
+`detect_with_retries` retries up to `PLATE_DETECT_MAX_RETRIES + 1` times if the child returns `None`.
+
+When tracking is enabled, `skip_logging=True` is passed so the child **does not** write to the parking log yet:
+
+```489:496:workers/camera_worker.py
+        result = detect_with_retries(
+            detect_frame_isolated,
+            path,
+            direction=job.direction,
+            light_profile=profile,
+            frame_shape=job.frame.shape[:2],
+            skip_logging=tracker_on,
+        )
 ```
-
-Every frame updates the live preview on the primary camera (`_set_latest_frame`). Plate scans are **not** every frame — only when the interval elapses:
-
-```python
-# workers/camera_worker.py — _drainer_loop()
-if now - last_detect >= config.frame_interval_seconds:
-    last_detect = now
-    _enqueue_detect(_DetectJob(
-        frame=frame.copy(),
-        camera_id=config.id,
-        direction=config.gate_role,
-        light_profile=config.light_profile,
-    ), detect_queue)
-```
-
-The detect queue drops the oldest job when full so scans keep up under load (`_enqueue_detect`).
 
 ---
 
-## Step 4 — Save snapshot and submit to OCR
+## 4. Isolated OCR child process
 
-The detect thread dequeues jobs and runs `_run_plate_detect_on_frame`:
+`detect_frame_isolated` (`helpers/plate_detect_isolated.py` ~126) is the **client**. `_worker_loop` (~23) is the **server** in a separate OS process.
 
-1. Writes `uploads/temp/camera_{id}_{uuid}.jpg`
-2. Resolves the camera light profile (`helpers/light_profile.py`)
-3. Calls `detect_with_retries(detect_frame_isolated, ...)` (`helpers/plate_detect_retries.py`)
-
-When **tracking is enabled** (default), logging is deferred:
-
-```python
-# workers/camera_worker.py — _run_plate_detect_on_frame()
-tracker_on = plate_tracking_enabled() and _runtime is not None
-result = detect_with_retries(
-    detect_frame_isolated,
-    path,
-    ...
-    skip_logging=tracker_on,
-)
+```
+main process (detect thread)          child process (plate-ocr-worker)
+  detect_frame_isolated()               _worker_loop()  [infinite loop]
+       │                                      │
+       │  _request_q.put(tuple)               │  request_q.get()
+       │  (path, direction, skip_logging…)    │  open JPEG from disk
+       │                                      │  run_plate_detect_on_file_obj()
+       │  _response_q.get()  ◄─────────────── │  response_q.put({result: ...})
+       │                                      │
+  returns result dict                   YOLO + OCR models in child RAM
 ```
 
-`skip_logging=True` tells the child process to return OCR results **without** writing a parking log yet.
+- `_detect_call_lock` — only one OCR job at a time from the main process.
+- The numpy frame is **not** sent over IPC; the child reads the JPEG path from disk.
+- If `skip_logging=True`, the child leaves the temp file on disk for the tracker to use when logging.
 
----
+`run_plate_detect_on_file_obj` (`helpers/plate_worker_pipeline.py`) calls `run_plate_detect_on_file` (`helpers/plate_pipeline.py`):
 
-## Step 5 — Isolated OCR child process
+1. YOLO finds plate boxes (`get_alpr().predict`)
+2. OCR reads text, normalizes plate, scores format
+3. Looks up vehicle in PostgreSQL (`find_vehicle_by_normalized`)
+4. Drops reads below `PLATE_OCR_MIN_CONFIDENCE` (default 0.42)
 
-Plate AI runs in a separate process so heavy model inference does not block the camera or web server:
-
-```python
-# helpers/plate_detect_isolated.py — _worker_loop()
-get_alpr()  # models load once per child PID
-result = run_plate_detect_on_file_obj(
-    f, path, direction=..., light_profile=..., skip_logging=skip_logging,
-)
-```
-
-The parent sends the job via multiprocessing queues and waits on `_response_q` (`detect_frame_isolated`). A global lock ensures one OCR job at a time (`_detect_call_lock`).
-
----
-
-## Step 6 — YOLO detection + OCR on one frame
-
-`run_plate_detect_on_file_obj` (`helpers/plate_worker_pipeline.py`) wraps the core pipeline:
-
-```python
-with light_profile_scope(effective_profile):
-    result = run_plate_detect_on_file(frame_path, direction=gate)
-```
-
-`run_plate_detect_on_file` (`helpers/plate_pipeline.py`):
-
-1. **`detect_plates_in_image`** — calls `get_alpr().predict(image_path)` (YOLO + OCR ensemble in `helpers/plate_alpr.py`)
-2. For each raw detection:
-   - Cleans OCR text (`clean_plate_ocr_text`)
-   - Scores format (`plate_format_score`, `is_plausible_plate`)
-   - Computes combined confidence (det × OCR × format)
-   - Normalizes plate (`normalize_plate`)
-3. **`_lookup_vehicle`** — registered / guest / expired guest handling
-4. Returns payload:
+Returns a dict:
 
 ```python
 {
-    "status": "ok",
-    "direction": "entry" | "exit",
-    "plates_detected": N,
-    "results": [
-        {
-            "plate_text": "...",
-            "plate_normalized": "...",
-            "confidence": 0.75,
-            "box": {"x", "y", "w", "h"},
-            "match_status": "registered" | "unregistered",
-            "vehicle_id": int | None,
-            ...
-        }
-    ],
+  "status": "ok",
+  "plates_detected": 1,
+  "results": [
+    {"plate_text": "...", "plate_normalized": "...", "confidence": 0.78,
+     "box": {"x", "y", "w", "h"}, "match_status": "registered", ...}
+  ]
 }
 ```
 
-Plates below `PLATE_OCR_MIN_CONFIDENCE` (default `0.42`, see `plate_ocr_min_confidence()` in `plate_pipeline.py`) are dropped before results are returned.
+---
+
+## 5. Lighting monitor (not voting, not overlay)
+
+After OCR, if tracker mode is on:
+
+```502:502:workers/camera_worker.py
+            note_plate_scan(light_profile=profile, plates_logged=plates_detected)
+```
+
+`note_plate_scan` (`helpers/lighting_monitor.py`) only increments a global `_empty_streak` counter when scans find zero plates under `high_glare` or `low_light`. After 15 empty scans it writes a `lighting_warning` to `software_logs`. It does **not** affect logging or the live overlay.
 
 ---
 
-## Step 7 — Multi-frame tracker (default path)
+## 6. Multi-frame tracker and voting
 
-When `PLATE_TRACKING_ENABLED=true`, `_route_results_through_tracker` in `workers/camera_worker.py` processes OCR results before logging.
+`_route_results_through_tracker` (`workers/camera_worker.py` ~272) runs in the **main process** on the detect thread.
 
-### 7a. Associate detections with tracks
+### 6a. Associate boxes with tracks
 
-```python
-tracker.update(
-    [{"box": r.get("box"), "confidence": r.get("confidence")} for r in raw_results],
-    now=now,
-)
+```371:374:workers/camera_worker.py
+    _need_ocr, expired_tracks = tracker.update(
+        [{"box": r.get("box"), "confidence": r.get("confidence")} for r in raw_results if r.get("box")],
+        now=now,
+    )
 ```
 
-`PlateTracker.update` (`helpers/plate_tracker.py`):
+`PlateTracker.update` (`helpers/plate_tracker.py` ~316):
 
-- Runs NMS on overlapping boxes (`nms_detections`)
-- Matches boxes to existing tracks by IoU (`PLATE_TRACK_IOU_THRESHOLD`)
-- Creates new tracks with `first_seen_at` for timing
-- Drops stale tracks after `PLATE_TRACK_MAX_AGE_SECONDS`
+- NMS on overlapping detections
+- Match boxes to existing tracks by IoU (`PLATE_TRACK_IOU_THRESHOLD`)
+- Create new tracks for new cars; increment `hits` on re-detection
+- Remove stale tracks after `PLATE_TRACK_MAX_AGE_SECONDS` (default 4s)
 
-### 7b. Record OCR reads per track
+Tracker state lives in `_runtime.track_states[camera_id].tracker._tracks` — a `dict[track_id → PlateTrack]` that **persists across frames**.
+
+### 6b. Record OCR reads
 
 For each detection matched to a track:
 
-- Skips if already logged or `hits < PLATE_TRACK_MIN_HITS`
-- Optionally **merges** tracks when IoU fails but OCR text is similar (`track_for_ocr_text`, `merge_into`)
-- Appends read to `track.ocr_reads` via `record_ocr_read`
-
-### 7c. Vote before logging
-
-`stable_read_for_logging(track_id)` returns a read only when:
-
-| Rule | Env var (default) |
-|------|-------------------|
-| Instant log — one high-confidence read | `PLATE_TRACK_INSTANT_LOG_CONF` (0.82) |
-| Vote — N agreeing reads (exact or similar) | `PLATE_TRACK_VOTE_COUNT` (2) |
-| Last attempt — single read above threshold | `PLATE_TRACK_SINGLE_LOG_CONF` (0.72) |
-
-If no stable read yet, the car waits for the next scan frame.
-
-### 7d. Build log row and persist
-
-When stable:
-
-```python
-timing = tracker.log_timing(track.track_id, now=now)
-row = build_result_row(..., timing=timing, track_confirmed=True)
-logged_plates = log_parking_events_for_results(frame_path, payload)
-tracker.mark_confirmed(..., logged=True)
+```428:438:workers/camera_worker.py
+        tracker.record_ocr_read(track.track_id, {
+            "plate_text": det.get("plate_text"),
+            "plate_normalized": det.get("plate_normalized"),
+            "confidence": det.get("confidence"),
+            ...
+        })
 ```
 
-`track_confirmed=True` skips the legacy stability gate in `parking_logging.py` (tracker already voted).
+Appends to `track.ocr_reads` in RAM. Skips if `track.logged` or `hits < PLATE_TRACK_MIN_HITS`.
 
-The live overlay on the primary camera only shows **confirmed** plates (`update_overlay_from_plate_results`).
+### 6c. Vote — `resolve_track_log`
+
+```455:455:workers/camera_worker.py
+        decision = tracker.resolve_track_log(live_track, on_expiry=False)
+```
+
+Voting logic (`helpers/plate_tracker.py` ~397):
+
+1. `_largest_vote_cluster(track.ocr_reads)` — groups similar plate texts (`plates_similar`)
+2. Compare cluster size to `PLATE_TRACK_VOTE_COUNT` (default 2)
+
+| Outcome | Condition |
+|---------|-----------|
+| **Confirmed** (`instant_log`) | Best read conf ≥ `PLATE_TRACK_INSTANT_LOG_CONF` (0.82) |
+| **Confirmed** (`vote_confirmed`) | ≥ vote_count similar reads AND max conf ≥ `PLATE_TRACK_CONFIRMED_MIN_CONF` (0.70) |
+| **Confirmed** (`single_confirmed`) | Last OCR attempt, single read ≥ 0.72 and ≥ 0.70 |
+| **Wait** | Returns `None` — car needs more scan frames |
+
+When a track **expires** (car left frame), `resolve_track_log(..., on_expiry=True)` may log an **uncertain** audit record instead of a confirmed entry/exit.
+
+### 6d. Persist confirmed read
+
+When `decision.tier == "confirmed"`, `_process_live_decision` (~318):
+
+1. `build_result_row()` — shape row for logging
+2. `log_parking_events_for_results(frame_path, payload)` — DB write (see §7)
+3. `tracker.mark_confirmed(..., logged=True)` — prevents duplicate logs for same car
+
+Returns `overlay_payload` — only plates logged **this frame**:
+
+```465:471:workers/camera_worker.py
+    return {
+        "status": "ok",
+        "plates_detected": len(logged_payload),
+        "results": logged_payload,
+        "logged_plates": logged_payload,
+    }
+```
 
 ---
 
-## Step 8 — Legacy path (tracking disabled)
+## 7. Parking log persistence
 
-If `PLATE_TRACKING_ENABLED=false`, the child process logs directly:
+`log_parking_events_for_results` (`helpers/parking_logging.py`) applies final gates:
 
-```python
-# helpers/plate_worker_pipeline.py
-logged_plates = log_parking_events_for_results(
-    frame_path, result, wrap_started_at=wrap_started,
-)
-```
-
-Unregistered plates then require **`PARKING_READ_STABILITY_COUNT`** agreeing reads within a time window before logging (`_stable_unregistered_read` in `parking_logging.py`).
-
----
-
-## Step 9 — Parking log persistence
-
-`log_parking_events_for_results` (`helpers/parking_logging.py`) runs final business rules:
-
-| Gate | Purpose | Code |
-|------|---------|------|
-| Stability (legacy only) | Block single-frame OCR garbage | `_stable_unregistered_read` |
-| Jitter cooldown | Block similar plate re-logs | `_jitter_cooldown_active` |
-| Parking cooldown | DB-configured min seconds between same key | `parking_log_cooldown_seconds()` |
+| Gate | Purpose |
+|------|---------|
+| Jitter cooldown | Block similar plate re-logs within `PARKING_JITTER_COOLDOWN_SECONDS` |
+| Parking cooldown | DB setting — min seconds between same plate + direction |
+| Stability (legacy only) | When tracking off — require N agreeing reads before unregistered log |
 
 On success:
 
-1. **Source frame** copied to `uploads/known_parking_logs/sources/` or `uploads/unknown_parking_logs/sources/`
-2. **Plate crop** (annotated box) to matching `crops/` folder — `_persist_plate_crop` uses `helpers/plate_crop.py`
-3. **PostgreSQL row** via `log_parking_event` (`database/logs_db.py` → `ParkingLog` model)
-4. **Console log**:
+1. Source frame → `uploads/known_parking_logs/sources/` or `unknown_parking_logs/sources/`
+2. Plate crop → matching `crops/` folder
+3. `log_parking_event()` → PostgreSQL `parking_logs` row (`database/logs_db.py`)
+4. Console: `[PARKING_LOGGED] plate=... direction=entry ...`
 
+In-memory cooldown maps (`_last_parking_log_at`, `_read_history`) update under a module lock.
+
+---
+
+## 8. Live overlay
+
+Only the **primary camera** flashes boxes on the MJPEG stream:
+
+```510:511:workers/camera_worker.py
+            if overlay_payload and job.camera_id == _runtime.primary_camera_id:
+                update_overlay_from_plate_results(job.frame.shape, overlay_payload)
 ```
-[PARKING_LOGGED] plate=... direction=entry status=unregistered ... wrap_s=2.341s hits=3
-```
 
-Timing fields are stored in the event `details` JSON under `"timing"`.
+`update_overlay_from_plate_results` (`helpers/live_frame_buffer.py` ~74) reads `logged_plates` and appends to global `_logged_flashes`. The preview thread draws colored rectangles for ~`LIVE_LOG_OVERLAY_SECONDS` (default 2s):
 
-Old snapshot files are purged by `helpers/snapshot_retention.py` (`SNAPSHOT_RETENTION_DAYS`, default 90).
-
----
-
-## Timing metrics
-
-| Field | Meaning | Source |
-|-------|---------|--------|
-| `detect_to_log_s` | Seconds from first track detection to log | `PlateTracker.log_timing()` — uses `first_seen_at` |
-| `wrap_s` | Same as above when from tracker; otherwise seconds since OCR wrapper started | `_resolve_item_timing()` |
-| `track_hits` | Detection frames the track appeared on | `log_timing()` |
-| `ocr_attempts` | OCR attempts on the track | `log_timing()` |
-
-Tracker timing is attached in `_route_results_through_tracker` before calling `log_parking_events_for_results`. Legacy mode uses `wrap_started_at` from `run_plate_detect_on_file_obj`.
+- Green — resident
+- Cyan — guest
+- Red — unregistered
+- Orange — uncertain
 
 ---
 
-## Key environment variables
+## 9. Cleanup
 
-| Variable | Default | Effect |
-|----------|---------|--------|
-| `PLATE_TRACKING_ENABLED` | `true` | Multi-frame vote before log |
-| `PLATE_TRACK_VOTE_COUNT` | `2` | Agreeing reads required |
-| `PLATE_TRACK_INSTANT_LOG_CONF` | `0.82` | Skip vote on very high confidence |
-| `PLATE_TRACK_MIN_HITS` | `1` | Frames before OCR read counts |
-| `PLATE_OCR_MIN_CONFIDENCE` | `0.42` | Per-frame confidence gate |
-| `PARKING_READ_STABILITY_COUNT` | `2` | Legacy stability (tracking off) |
-| `PARKING_JITTER_COOLDOWN_SECONDS` | `120` | Similar-plate re-log block |
-| `PLATE_DEBUG` | off | Verbose tracker / format logs |
-
-Full list: `.env.example` and [camera_worker.md](camera_worker.md).
+If tracker mode was on, the temp JPEG is deleted in the `finally` block of `_run_plate_detect_on_frame` (~518). `job.frame` is freed when the detect thread finishes the job.
 
 ---
 
-## Demo walkthrough (files to open in order)
+## Legacy path (tracking disabled)
 
-1. `main.py` — `start_background_workers()`
-2. `workers/camera_worker.py` — `_start_runtime`, `_drainer_loop`, `_run_plate_detect_on_frame`, `_route_results_through_tracker`
-3. `helpers/plate_detect_isolated.py` — `_worker_loop`
-4. `helpers/plate_pipeline.py` — `detect_plates_in_image`, `run_plate_detect_on_file`
-5. `helpers/plate_tracker.py` — `PlateTracker.update`, `stable_read_for_logging`
+When `PLATE_TRACKING_ENABLED=false`:
+
+- `skip_logging=False` → child calls `log_parking_events_for_results` directly in `plate_worker_pipeline.py`
+- Main process skips `_route_results_through_tracker`
+- Overlay uses `result["logged_plates"]` from the child
+
+---
+
+## Key files (read in order)
+
+1. `main.py` — `start_camera_worker_thread()`
+2. `workers/camera_worker.py` — `_drainer_loop`, `_enqueue_detect`, `_run_plate_detect_on_frame`, `_route_results_through_tracker`
+3. `helpers/plate_detect_isolated.py` — `detect_frame_isolated`, `_worker_loop`
+4. `helpers/plate_pipeline.py` — `run_plate_detect_on_file`
+5. `helpers/plate_tracker.py` — `PlateTracker.update`, `resolve_track_log`, `_largest_vote_cluster`
 6. `helpers/parking_logging.py` — `log_parking_events_for_results`
 7. `database/logs_db.py` — `log_parking_event`
 
 ---
 
+## Key env vars
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PLATE_TRACKING_ENABLED` | `true` | Vote across frames before log |
+| `PLATE_TRACK_VOTE_COUNT` | `2` | Similar reads required to confirm |
+| `PLATE_TRACK_INSTANT_LOG_CONF` | `0.82` | Skip vote on very high confidence |
+| `PLATE_TRACK_MIN_HITS` | `1` | Detection frames before OCR counts |
+| `PLATE_OCR_MIN_CONFIDENCE` | `0.42` | Per-frame confidence gate |
+| `CAMERA_DETECT_QUEUE_SIZE` | `4` | Max queued scan jobs |
+| `PLATE_DETECT_MAX_RETRIES` | `2` | OCR retry count |
+
+Full list: `.env.example`
+
+---
+
 ## Related tests
 
-| Test file | Covers |
-|-----------|--------|
-| `tests/test_plate_tracker.py` | IoU, NMS, voting, timing |
-| `tests/test_parking_logging.py` | Stability, cooldown, wrap timing |
-| `tests/test_plate_format.py` | Format validation |
-| `tests/test_plate_alpr_langs.py` | OCR language paths |
-
-Run: `python -m pytest tests/test_plate_tracker.py tests/test_parking_logging.py -q`
+```bash
+python -m pytest tests/test_plate_tracker.py tests/test_parking_logging.py -q
+```
