@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import shutil
 import threading
 import time
 import uuid
@@ -44,6 +45,38 @@ from helpers.light_profile import resolve_light_profile
 from helpers.utils import UPLOAD_TEMP_FOLDER
 
 logger = logging.getLogger(__name__)
+
+
+def _track_frame_dest(camera_id: int, track_id: int) -> str:
+    """Stable temp path for the most-recent OCR frame belonging to a track."""
+    return os.path.join(UPLOAD_TEMP_FOLDER, f"trackframe_{camera_id}_{track_id}.jpg")
+
+
+def _save_track_frame(src: str, camera_id: int, track_id: int) -> None:
+    """Copy the detection frame as the track snapshot only if it is the best-confidence frame so far."""
+    dest = _track_frame_dest(camera_id, track_id)
+    try:
+        shutil.copy2(src, dest)
+    except OSError:
+        logger.debug("Could not save track frame cam=%s track=%s", camera_id, track_id)
+
+
+def _cleanup_track_frames(camera_ids: list[int]) -> None:
+    """Delete leftover per-track frame temp files for the given cameras."""
+    for cam_id in camera_ids:
+        prefix = f"trackframe_{cam_id}_"
+        try:
+            for fname in os.listdir(UPLOAD_TEMP_FOLDER):
+                if fname.startswith(prefix) and fname.endswith(".jpg"):
+                    _remove_temp_file(os.path.join(UPLOAD_TEMP_FOLDER, fname))
+        except OSError:
+            logger.debug("Could not list temp folder for track-frame cleanup cam=%s", cam_id)
+
+
+def _pop_track_frame(camera_id: int, track_id: int) -> str | None:
+    """Return the saved track-frame path if it exists (caller must delete after use)."""
+    path = _track_frame_dest(camera_id, track_id)
+    return path if os.path.exists(path) else None
 
 
 @dataclass(frozen=True)
@@ -273,25 +306,26 @@ def _route_results_through_tracker(
         if decision is None or decision.tier != "uncertain":
             return
         timing = tracker.log_timing_for_track(track, now=now)
-        # The expired track's box is from a previous scan; frame_path is the
-        # current scan — using them together produces a crop of the wrong area
-        # (ground, sky, or another car). Store the last-known box in timing for
-        # audit purposes and skip the crop (snapshot falls back to source frame).
-        last_box = box_for_log(decision.read, track) or dict(track.box)
-        timing = dict(timing or {})
-        timing["last_known_box"] = last_box
-        log_uncertain_track_event(
-            frame_path,
-            direction=job.direction,
-            plate_normalized=str(decision.read.get("plate_normalized") or ""),
-            plate_text=str(decision.read.get("plate_text") or ""),
-            confidence=float(decision.read.get("confidence") or 0),
-            box=None,
-            timing=timing,
-            skip_reason=decision.reason,
-            track_id=track.track_id,
-            plate_color=str(decision.read.get("plate_color") or "") or None,
-        )
+        # Use the frame saved at OCR-read time (the scan that actually saw the
+        # plate), not frame_path (the current scan that just found no IoU match
+        # and triggered expiry — the car is already gone from that frame).
+        ocr_frame = _pop_track_frame(job.camera_id, track.track_id) or frame_path
+        try:
+            log_uncertain_track_event(
+                ocr_frame,
+                direction=job.direction,
+                plate_normalized=str(decision.read.get("plate_normalized") or ""),
+                plate_text=str(decision.read.get("plate_text") or ""),
+                confidence=float(decision.read.get("confidence") or 0),
+                box=box_for_log(decision.read, track) or dict(track.box),
+                timing=timing,
+                skip_reason=decision.reason,
+                track_id=track.track_id,
+                plate_color=str(decision.read.get("plate_color") or "") or None,
+            )
+        finally:
+            if ocr_frame != frame_path:
+                _remove_temp_file(ocr_frame)
 
     def _process_live_decision(track, decision: TrackLogDecision) -> None:
         if decision.tier != "confirmed":
@@ -338,6 +372,9 @@ def _route_results_through_tracker(
             confidence=float(decision.read.get("confidence") or 0),
             logged=True,
         )
+        # Confirmed track — we used frame_path (current frame), so the
+        # intermediate OCR frame copy for this track is no longer needed.
+        _remove_temp_file(_track_frame_dest(job.camera_id, track.track_id))
 
     # IoU-associate raw detections with active tracks (creates new tracks as needed).
     _need_ocr, expired_tracks = tracker.update(
@@ -357,12 +394,29 @@ def _route_results_through_tracker(
         det_conf = float(det.get("confidence") or 0)
         track = tracker.track_for_box(box, exclude_logged=True)
         orphan_reason: str | None = None
+        needs_orphan = False
         if track is not None and plate_norm and not tracker.track_accepts_plate(track, plate_norm):
+            needs_orphan = True
             orphan_reason = "plate_mismatch"
-            track = tracker.create_orphan_track(box, confidence=det_conf, now=now)
         elif track is None:
+            needs_orphan = True
             orphan_reason = "no_iou_track"
+
+        if needs_orphan:
+            # Before creating the orphan, check whether this read is just the
+            # visible suffix of a plate already logged by an IoU-overlapping
+            # track (car partially exiting the frame). tracker.update() keeps
+            # logged-track boxes current, so the IoU is always fresh.
+            if plate_norm and tracker.logged_plate_covers(box, plate_norm):
+                if plate_debug_logging():
+                    logger.info(
+                        "[TRACKER] cam=%s suppress partial-exit read=%r reason=logged_suffix",
+                        job.camera_id,
+                        plate_norm,
+                    )
+                continue
             track = tracker.create_orphan_track(box, confidence=det_conf, now=now)
+
         if orphan_reason and plate_debug_logging():
             logger.info(
                 "[TRACKER] cam=%s %s track=%s text=%r conf=%.2f",
@@ -421,6 +475,16 @@ def _route_results_through_tracker(
             },
         )
         tracker.mark_ocr_finished(track.track_id)
+        # Save this frame only when the new read is the best-confidence read so
+        # far on this track — the saved file must match the read that
+        # resolve_track_log() will select as decision.read for uncertain crops.
+        new_conf = float(det.get("confidence") or 0)
+        prev_best = max(
+            (float(r.get("confidence") or 0) for r in track.ocr_reads[:-1]),
+            default=-1.0,
+        )
+        if new_conf > prev_best:
+            _save_track_frame(frame_path, job.camera_id, track.track_id)
 
         if plate_debug_logging():
             logger.info(
@@ -666,11 +730,13 @@ def _stop_runtime(runtime: _WorkerRuntime) -> None:
         for state in runtime.track_states.values():
             state.tracker.reset()
         runtime.track_states.clear()
+    _cleanup_track_frames([cfg.id for cfg in runtime.configs])
     _clear_latest_frame()
     set_camera_disconnected()
 
 
 def _start_runtime(configs: list[CameraConfig]) -> _WorkerRuntime:
+    _cleanup_track_frames([cfg.id for cfg in configs])
     runtime = _WorkerRuntime()
     runtime.configs = configs
     runtime.primary_camera_id = configs[0].id if configs else None

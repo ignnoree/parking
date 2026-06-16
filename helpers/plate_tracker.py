@@ -329,6 +329,29 @@ class PlateTracker:
                     break
         return best_track
 
+    def logged_plate_covers(self, box: dict, plate_normalized: str) -> bool:
+        """
+        Return True when `plate_normalized` is a visible suffix of an already-
+        logged plate on an IoU-overlapping track — i.e. the car is partially
+        exiting the frame and the detector only sees the remaining characters.
+
+        tracker.update() keeps logged track boxes current, so the IoU check
+        reliably reflects the car's actual position even after it was logged.
+        """
+        if not plate_normalized or len(plate_normalized) < 4:
+            return False
+        for track in self._tracks.values():
+            if not track.logged or not track.plate_normalized:
+                continue
+            if box_iou(track.box, box) < self.iou_threshold:
+                continue
+            logged = track.plate_normalized
+            if logged == plate_normalized:
+                return True
+            if logged.endswith(plate_normalized):
+                return True
+        return False
+
     def merge_into(self, src_id: int, dst_id: int) -> bool:
         """
         Merge `src` track's reads, position, and hit count into `dst` and delete

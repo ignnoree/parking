@@ -43,7 +43,7 @@ def plates_similar(a: str, b: str) -> bool:
     # other (car partially exited the frame, left characters were cut by the edge).
     # Require at least 5 visible chars and at most 4 chars missing from the left.
     shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-    if len(shorter) >= 5 and len(longer) - len(shorter) <= 4 and longer.endswith(shorter):
+    if len(shorter) >= 5 and len(longer) - len(shorter) <= 5 and longer.endswith(shorter):
         return True
     if abs(len(a) - len(b)) > 2:
         return False

@@ -100,6 +100,11 @@ def _stable_unregistered_read(norm: str, now_utc: datetime.datetime) -> bool:
     return False
 
 
+def _is_partial_suffix_of(shorter: str, longer: str) -> bool:
+    """True when shorter is at least 4 chars and an exact right-hand suffix of longer."""
+    return len(shorter) >= 4 and len(longer) > len(shorter) and longer.endswith(shorter)
+
+
 def _jitter_cooldown_active(canonical: str, direction: str, now_utc: datetime.datetime) -> bool:
     """Block only if we already logged a *similar* plate recently — not different cars."""
     if PARKING_JITTER_COOLDOWN_SECONDS <= 0:
@@ -111,6 +116,11 @@ def _jitter_cooldown_active(canonical: str, direction: str, now_utc: datetime.da
         if now_utc - logged_at > window:
             break
         if plates_similar(prev_norm, canonical):
+            return True
+        # Suppress a short partial read when a longer plate ending with it was already logged
+        # (e.g. "9670" after "TSO7JS9670"). plates_similar rejects pairs with >2 char length
+        # difference, so the jitter cooldown was blind to this common partial-exit pattern.
+        if _is_partial_suffix_of(canonical, prev_norm):
             return True
     return False
 
@@ -125,6 +135,8 @@ def _uncertain_jitter_cooldown_active(canonical: str, direction: str, now_utc: d
         if now_utc - logged_at > window:
             break
         if plates_similar(prev_norm, canonical):
+            return True
+        if _is_partial_suffix_of(canonical, prev_norm):
             return True
     return False
 
