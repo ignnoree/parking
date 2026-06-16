@@ -104,6 +104,8 @@ class _CameraTrackState:
     """Per-camera tracker used for multi-frame voting before logging."""
 
     tracker: PlateTracker = field(default_factory=PlateTracker)
+    # Serializes tracker mutations when multiple detect threads run concurrently.
+    process_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class _WorkerRuntime:
@@ -113,12 +115,12 @@ class _WorkerRuntime:
         self.configs: list[CameraConfig] = []
         self.drainer_threads: list[threading.Thread] = []
         self.preview_thread: threading.Thread | None = None
-        self.detect_thread: threading.Thread | None = None
         self.detect_queue: queue.Queue[_DetectJob | None] = queue.Queue(
             maxsize=camera_detect_queue_size()
         )
         self.track_states: dict[int, _CameraTrackState] = {}
         self.track_lock = threading.Lock()
+        self.detect_threads: list[threading.Thread] = []
 
     def alive(self) -> bool:
         return any(t.is_alive() for t in self.drainer_threads)
@@ -164,7 +166,11 @@ def _buffer_drain_reads() -> int:
 
 
 def camera_detect_queue_size() -> int:
-    return max(1, min(16, int(os.environ.get("CAMERA_DETECT_QUEUE_SIZE", "4"))))
+    return max(1, min(32, int(os.environ.get("CAMERA_DETECT_QUEUE_SIZE", "4"))))
+
+
+def plate_ocr_workers() -> int:
+    return max(1, int(os.environ.get("PLATE_OCR_WORKERS", "1")))
 
 
 def _open_capture(source: int | str) -> cv2.VideoCapture:
@@ -299,212 +305,217 @@ def _route_results_through_tracker(
     raw_results = [r for r in (result.get("results") or []) if isinstance(r, dict)]
     state = runtime.track_state_for(job.camera_id)
     tracker = state.tracker
-    now = time.monotonic()
 
-    def _process_expired_track(track) -> None:
-        decision = tracker.resolve_track_log(track, on_expiry=True)
-        if decision is None or decision.tier != "uncertain":
-            return
-        timing = tracker.log_timing_for_track(track, now=now)
-        # Use the frame saved at OCR-read time (the scan that actually saw the
-        # plate), not frame_path (the current scan that just found no IoU match
-        # and triggered expiry — the car is already gone from that frame).
-        ocr_frame = _pop_track_frame(job.camera_id, track.track_id) or frame_path
-        try:
-            log_uncertain_track_event(
-                ocr_frame,
+    # Serialize all tracker mutations per camera. Multiple detect threads run
+    # OCR concurrently (each in its own subprocess slot), but the tracker is
+    # not thread-safe so updates must be single-threaded per camera.
+    with state.process_lock:
+        now = time.monotonic()
+
+        def _process_expired_track(track) -> None:
+            decision = tracker.resolve_track_log(track, on_expiry=True)
+            if decision is None or decision.tier != "uncertain":
+                return
+            timing = tracker.log_timing_for_track(track, now=now)
+            # Use the frame saved at OCR-read time (the scan that actually saw the
+            # plate), not frame_path (the current scan that just found no IoU match
+            # and triggered expiry — the car is already gone from that frame).
+            ocr_frame = _pop_track_frame(job.camera_id, track.track_id) or frame_path
+            try:
+                log_uncertain_track_event(
+                    ocr_frame,
+                    direction=job.direction,
+                    plate_normalized=str(decision.read.get("plate_normalized") or ""),
+                    plate_text=str(decision.read.get("plate_text") or ""),
+                    confidence=float(decision.read.get("confidence") or 0),
+                    box=box_for_log(decision.read, track) or dict(track.box),
+                    timing=timing,
+                    skip_reason=decision.reason,
+                    track_id=track.track_id,
+                    plate_color=str(decision.read.get("plate_color") or "") or None,
+                )
+            finally:
+                if ocr_frame != frame_path:
+                    _remove_temp_file(ocr_frame)
+
+        def _process_live_decision(track, decision: TrackLogDecision) -> None:
+            if decision.tier != "confirmed":
+                return
+            timing = tracker.log_timing(track.track_id, now=now)
+            # Use the track's current IoU-updated box (matches the current frame)
+            # rather than the OCR-read box, which may be from an older scan position.
+            log_box = dict(track.box) if track.box.get("w") and track.box.get("h") else box_for_log(decision.read, track)
+            row = build_result_row(
+                {
+                    "plate_text": decision.read.get("plate_text"),
+                    "plate_normalized": decision.read.get("plate_normalized"),
+                    "confidence": decision.read.get("confidence"),
+                    "box": log_box,
+                    "plate_color": decision.read.get("plate_color"),
+                },
                 direction=job.direction,
-                plate_normalized=str(decision.read.get("plate_normalized") or ""),
-                plate_text=str(decision.read.get("plate_text") or ""),
-                confidence=float(decision.read.get("confidence") or 0),
-                box=box_for_log(decision.read, track) or dict(track.box),
                 timing=timing,
-                skip_reason=decision.reason,
-                track_id=track.track_id,
-                plate_color=str(decision.read.get("plate_color") or "") or None,
+                track_confirmed=True,
             )
-        finally:
-            if ocr_frame != frame_path:
-                _remove_temp_file(ocr_frame)
+            if row is None:
+                return
 
-    def _process_live_decision(track, decision: TrackLogDecision) -> None:
-        if decision.tier != "confirmed":
-            return
-        timing = tracker.log_timing(track.track_id, now=now)
-        # Use the track's current IoU-updated box (matches the current frame)
-        # rather than the OCR-read box, which may be from an older scan position.
-        log_box = dict(track.box) if track.box.get("w") and track.box.get("h") else box_for_log(decision.read, track)
-        row = build_result_row(
-            {
-                "plate_text": decision.read.get("plate_text"),
-                "plate_normalized": decision.read.get("plate_normalized"),
-                "confidence": decision.read.get("confidence"),
-                "box": log_box,
-                "plate_color": decision.read.get("plate_color"),
-            },
-            direction=job.direction,
-            timing=timing,
-            track_confirmed=True,
-        )
-        if row is None:
-            return
+            payload = {
+                "status": "ok",
+                "direction": job.direction,
+                "plates_detected": 1,
+                "results": [row],
+            }
+            try:
+                log_parking_events_for_results(frame_path, payload)
+            except Exception:
+                logger.exception(
+                    "Tracker log persistence failed (camera_id=%s track=%s)",
+                    job.camera_id,
+                    track.track_id,
+                )
+                return
 
-        payload = {
-            "status": "ok",
-            "direction": job.direction,
-            "plates_detected": 1,
-            "results": [row],
-        }
-        try:
-            log_parking_events_for_results(frame_path, payload)
-        except Exception:
-            logger.exception(
-                "Tracker log persistence failed (camera_id=%s track=%s)",
-                job.camera_id,
+            tracker.mark_confirmed(
                 track.track_id,
+                plate_text=str(decision.read.get("plate_text") or ""),
+                plate_normalized=str(decision.read.get("plate_normalized") or ""),
+                confidence=float(decision.read.get("confidence") or 0),
+                logged=True,
             )
-            return
+            # Confirmed track — we used frame_path (current frame), so the
+            # intermediate OCR frame copy for this track is no longer needed.
+            _remove_temp_file(_track_frame_dest(job.camera_id, track.track_id))
 
-        tracker.mark_confirmed(
-            track.track_id,
-            plate_text=str(decision.read.get("plate_text") or ""),
-            plate_normalized=str(decision.read.get("plate_normalized") or ""),
-            confidence=float(decision.read.get("confidence") or 0),
-            logged=True,
+        # IoU-associate raw detections with active tracks (creates new tracks as needed).
+        _need_ocr, expired_tracks = tracker.update(
+            [{"box": r.get("box"), "confidence": r.get("confidence")} for r in raw_results if r.get("box")],
+            now=now,
         )
-        # Confirmed track — we used frame_path (current frame), so the
-        # intermediate OCR frame copy for this track is no longer needed.
-        _remove_temp_file(_track_frame_dest(job.camera_id, track.track_id))
 
-    # IoU-associate raw detections with active tracks (creates new tracks as needed).
-    _need_ocr, expired_tracks = tracker.update(
-        [{"box": r.get("box"), "confidence": r.get("confidence")} for r in raw_results if r.get("box")],
-        now=now,
-    )
+        for track in expired_tracks:
+            _process_expired_track(track)
 
-    for track in expired_tracks:
-        _process_expired_track(track)
+        min_hits = plate_track_min_hits()
+        for det in raw_results:
+            box = det.get("box")
+            if not isinstance(box, dict):
+                continue
+            plate_norm = str(det.get("plate_normalized") or "").strip()
+            det_conf = float(det.get("confidence") or 0)
+            track = tracker.track_for_box(box, exclude_logged=True)
+            orphan_reason: str | None = None
+            needs_orphan = False
+            if track is not None and plate_norm and not tracker.track_accepts_plate(track, plate_norm):
+                needs_orphan = True
+                orphan_reason = "plate_mismatch"
+            elif track is None:
+                needs_orphan = True
+                orphan_reason = "no_iou_track"
 
-    min_hits = plate_track_min_hits()
-    for det in raw_results:
-        box = det.get("box")
-        if not isinstance(box, dict):
-            continue
-        plate_norm = str(det.get("plate_normalized") or "").strip()
-        det_conf = float(det.get("confidence") or 0)
-        track = tracker.track_for_box(box, exclude_logged=True)
-        orphan_reason: str | None = None
-        needs_orphan = False
-        if track is not None and plate_norm and not tracker.track_accepts_plate(track, plate_norm):
-            needs_orphan = True
-            orphan_reason = "plate_mismatch"
-        elif track is None:
-            needs_orphan = True
-            orphan_reason = "no_iou_track"
+            if needs_orphan:
+                # Before creating the orphan, check whether this read is just the
+                # visible suffix of a plate already logged by an IoU-overlapping
+                # track (car partially exiting the frame). tracker.update() keeps
+                # logged-track boxes current, so the IoU is always fresh.
+                if plate_norm and tracker.logged_plate_covers(box, plate_norm):
+                    if plate_debug_logging():
+                        logger.info(
+                            "[TRACKER] cam=%s suppress partial-exit read=%r reason=logged_suffix",
+                            job.camera_id,
+                            plate_norm,
+                        )
+                    continue
+                track = tracker.create_orphan_track(box, confidence=det_conf, now=now)
 
-        if needs_orphan:
-            # Before creating the orphan, check whether this read is just the
-            # visible suffix of a plate already logged by an IoU-overlapping
-            # track (car partially exiting the frame). tracker.update() keeps
-            # logged-track boxes current, so the IoU is always fresh.
-            if plate_norm and tracker.logged_plate_covers(box, plate_norm):
+            if orphan_reason and plate_debug_logging():
+                logger.info(
+                    "[TRACKER] cam=%s %s track=%s text=%r conf=%.2f",
+                    job.camera_id,
+                    orphan_reason,
+                    track.track_id,
+                    plate_norm,
+                    det_conf,
+                )
+
+            # OCR-similarity association: if the IoU pass landed on a brand-new
+            # track (no reads yet) and another active track has similar OCR text,
+            # merge into that track instead. This catches the case where a moving
+            # car between scans doesn't overlap its previous box but has a
+            # recognizably-similar plate read.
+            if (
+                not track.ocr_reads
+                and not track.logged
+                and plate_norm
+            ):
+                sibling = tracker.track_for_ocr_text(plate_norm, exclude_id=track.track_id)
+                if sibling is not None and tracker.merge_into(track.track_id, sibling.track_id):
+                    if plate_debug_logging():
+                        logger.info(
+                            "[TRACKER] cam=%s merge new_track->%s text=%r (OCR-similarity fallback)",
+                            job.camera_id,
+                            sibling.track_id,
+                            plate_norm,
+                        )
+                    track = sibling
+
+            if track.logged:
+                continue
+            # Filter single-frame ghost detections: require min_hits before trusting OCR reads.
+            if track.hits < min_hits:
                 if plate_debug_logging():
                     logger.info(
-                        "[TRACKER] cam=%s suppress partial-exit read=%r reason=logged_suffix",
+                        "[TRACKER] cam=%s track=%s skip read=%r reason=min_hits hits=%s need=%s",
                         job.camera_id,
-                        plate_norm,
+                        track.track_id,
+                        det.get("plate_normalized"),
+                        track.hits,
+                        min_hits,
                     )
                 continue
-            track = tracker.create_orphan_track(box, confidence=det_conf, now=now)
 
-        if orphan_reason and plate_debug_logging():
-            logger.info(
-                "[TRACKER] cam=%s %s track=%s text=%r conf=%.2f",
-                job.camera_id,
-                orphan_reason,
+            tracker.mark_ocr_pending(track.track_id, now=now)
+            tracker.record_ocr_read(
                 track.track_id,
-                plate_norm,
-                det_conf,
+                {
+                    "plate_text": det.get("plate_text"),
+                    "plate_normalized": det.get("plate_normalized"),
+                    "confidence": det.get("confidence"),
+                    "plate_color": det.get("plate_color"),
+                    "box": dict(box),
+                },
             )
+            tracker.mark_ocr_finished(track.track_id)
+            # Save this frame only when the new read is the best-confidence read so
+            # far on this track — the saved file must match the read that
+            # resolve_track_log() will select as decision.read for uncertain crops.
+            new_conf = float(det.get("confidence") or 0)
+            prev_best = max(
+                (float(r.get("confidence") or 0) for r in track.ocr_reads[:-1]),
+                default=-1.0,
+            )
+            if new_conf > prev_best:
+                _save_track_frame(frame_path, job.camera_id, track.track_id)
 
-        # OCR-similarity association: if the IoU pass landed on a brand-new
-        # track (no reads yet) and another active track has similar OCR text,
-        # merge into that track instead. This catches the case where a moving
-        # car between scans doesn't overlap its previous box but has a
-        # recognizably-similar plate read.
-        if (
-            not track.ocr_reads
-            and not track.logged
-            and plate_norm
-        ):
-            sibling = tracker.track_for_ocr_text(plate_norm, exclude_id=track.track_id)
-            if sibling is not None and tracker.merge_into(track.track_id, sibling.track_id):
-                if plate_debug_logging():
-                    logger.info(
-                        "[TRACKER] cam=%s merge new_track->%s text=%r (OCR-similarity fallback)",
-                        job.camera_id,
-                        sibling.track_id,
-                        plate_norm,
-                    )
-                track = sibling
-
-        if track.logged:
-            continue
-        # Filter single-frame ghost detections: require min_hits before trusting OCR reads.
-        if track.hits < min_hits:
             if plate_debug_logging():
                 logger.info(
-                    "[TRACKER] cam=%s track=%s skip read=%r reason=min_hits hits=%s need=%s",
+                    "[TRACKER] cam=%s track=%s read=%r conf=%.2f hits=%s attempts=%s",
                     job.camera_id,
                     track.track_id,
                     det.get("plate_normalized"),
+                    float(det.get("confidence") or 0),
                     track.hits,
-                    min_hits,
+                    track.ocr_attempts,
                 )
-            continue
 
-        tracker.mark_ocr_pending(track.track_id, now=now)
-        tracker.record_ocr_read(
-            track.track_id,
-            {
-                "plate_text": det.get("plate_text"),
-                "plate_normalized": det.get("plate_normalized"),
-                "confidence": det.get("confidence"),
-                "plate_color": det.get("plate_color"),
-                "box": dict(box),
-            },
-        )
-        tracker.mark_ocr_finished(track.track_id)
-        # Save this frame only when the new read is the best-confidence read so
-        # far on this track — the saved file must match the read that
-        # resolve_track_log() will select as decision.read for uncertain crops.
-        new_conf = float(det.get("confidence") or 0)
-        prev_best = max(
-            (float(r.get("confidence") or 0) for r in track.ocr_reads[:-1]),
-            default=-1.0,
-        )
-        if new_conf > prev_best:
-            _save_track_frame(frame_path, job.camera_id, track.track_id)
+            live_track = tracker.get_track(track.track_id)
+            if live_track is None:
+                continue
+            decision = tracker.resolve_track_log(live_track, on_expiry=False)
+            if decision is None:
+                continue
 
-        if plate_debug_logging():
-            logger.info(
-                "[TRACKER] cam=%s track=%s read=%r conf=%.2f hits=%s attempts=%s",
-                job.camera_id,
-                track.track_id,
-                det.get("plate_normalized"),
-                float(det.get("confidence") or 0),
-                track.hits,
-                track.ocr_attempts,
-            )
-
-        live_track = tracker.get_track(track.track_id)
-        if live_track is None:
-            continue
-        decision = tracker.resolve_track_log(live_track, on_expiry=False)
-        if decision is None:
-            continue
-
-        _process_live_decision(live_track, decision)
+            _process_live_decision(live_track, decision)
 
 
 def _run_plate_detect_on_frame(job: _DetectJob) -> None:
@@ -705,27 +716,29 @@ def _drainer_loop(
 
 def _stop_runtime(runtime: _WorkerRuntime) -> None:
     runtime.stop_event.set()
-    try:
-        runtime.detect_queue.put_nowait(None)
-    except queue.Full:
-        try:
-            runtime.detect_queue.get_nowait()
-        except queue.Empty:
-            pass
+    # Each detect thread blocks on queue.get(); send one sentinel per thread to wake all of them.
+    for _ in range(max(1, len(runtime.detect_threads))):
         try:
             runtime.detect_queue.put_nowait(None)
         except queue.Full:
-            pass
+            try:
+                runtime.detect_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                runtime.detect_queue.put_nowait(None)
+            except queue.Full:
+                pass
     for thread in runtime.drainer_threads:
         thread.join(timeout=2.0)
     if runtime.preview_thread:
         runtime.preview_thread.join(timeout=2.0)
     if not wait_until_idle(timeout=90.0):
-        logger.warning("Plate OCR still busy during camera reload; waiting for detect thread")
-    if runtime.detect_thread:
-        runtime.detect_thread.join(timeout=90.0)
-        if runtime.detect_thread.is_alive():
-            logger.warning("Detect thread did not stop cleanly during camera reload")
+        logger.warning("Plate OCR still busy during camera reload; waiting for detect threads")
+    for dt in runtime.detect_threads:
+        dt.join(timeout=90.0)
+        if dt.is_alive():
+            logger.warning("Detect thread %s did not stop cleanly during camera reload", dt.name)
     with runtime.track_lock:
         for state in runtime.track_states.values():
             state.tracker.reset()
@@ -751,13 +764,16 @@ def _start_runtime(configs: list[CameraConfig]) -> _WorkerRuntime:
     )
     runtime.preview_thread.start()
 
-    runtime.detect_thread = threading.Thread(
-        target=_detect_worker_loop,
-        kwargs={"stop_event": runtime.stop_event, "detect_queue": runtime.detect_queue},
-        name="plate-detect",
-        daemon=True,
-    )
-    runtime.detect_thread.start()
+    n_workers = plate_ocr_workers()
+    for worker_idx in range(n_workers):
+        dt = threading.Thread(
+            target=_detect_worker_loop,
+            kwargs={"stop_event": runtime.stop_event, "detect_queue": runtime.detect_queue},
+            name=f"plate-detect-{worker_idx}",
+            daemon=True,
+        )
+        dt.start()
+        runtime.detect_threads.append(dt)
 
     for idx, cfg in enumerate(configs):
         thread = threading.Thread(

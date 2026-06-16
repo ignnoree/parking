@@ -29,98 +29,46 @@ def plate_max_length() -> int:
     return min(14, max(plate_min_length(), int(os.environ.get("PLATE_MAX_LENGTH", "12"))))
 
 
-def fix_latin_ambiguous_chars(text: str) -> str:
-    """
-    Fix common Latin OCR swaps using neighbor context (cross-border safe).
-    - 1 -> I when beside letters (thin I misread as one)
-    - 1 -> I when adjacent to a letter in a letter-heavy plate (e.g. MW51VSU -> MWSIVSU)
-    - 0 <-> O using letter vs digit neighbors
-    """
-    if not text or not text.isascii():
-        return text
-    chars = list(text.upper())
-    n = len(chars)
-
-    def latin_letter(ch: str) -> bool:
-        return len(ch) == 1 and ch.isalpha() and ch.isascii()
-
-    def digit(ch: str) -> bool:
-        return len(ch) == 1 and ch.isdigit()
-
-    other_letters = sum(1 for ch in chars if latin_letter(ch))
-    other_digits = sum(1 for ch in chars if digit(ch) and ch != "1")
-    letter_heavy = other_letters > other_digits
-
-    def digit_run_length_at(idx: int) -> int:
-        if not digit(chars[idx]):
-            return 0
-        left_count = 0
-        j = idx - 1
-        while j >= 0 and digit(chars[j]):
-            left_count += 1
-            j -= 1
-        right_count = 0
-        j = idx + 1
-        while j < n and digit(chars[j]):
-            right_count += 1
-            j += 1
-        return 1 + left_count + right_count
-
-    for i in range(n):
-        ch = chars[i]
-        left = chars[i - 1] if i > 0 else ""
-        right = chars[i + 1] if i + 1 < n else ""
-        if ch == "1" and not digit(left) and not digit(right):
-            if latin_letter(left) or latin_letter(right):
-                chars[i] = "I"
-        elif (
-            ch == "1"
-            and letter_heavy
-            and digit_run_length_at(i) <= 2
-            and (latin_letter(left) or latin_letter(right))
-        ):
-            chars[i] = "I"
-        elif ch == "0" and latin_letter(left) and latin_letter(right):
-            chars[i] = "O"
-        elif ch == "O" and digit(left) and (digit(right) or right == ""):
-            chars[i] = "0"
-        elif ch == "O" and digit(right) and (digit(left) or left == ""):
-            chars[i] = "0"
-    return "".join(chars)
+def fix_ocr_confusions(raw: str | None) -> str:
+    """Map common misreads (e.g. pipe → capital I) before junk removal."""
+    if not raw:
+        return ""
+    return raw.strip().translate(_OCR_CHAR_FIXES)
 
 
 def ocr_read_variants(cleaned: str) -> list[str]:
-    """Alternate reads for ambiguous D/O between letters (both kept for ranking)."""
+    """
+    Alternate reads for visually ambiguous characters — both forms kept for ranking
+    so the multi-frame tracker vote resolves the ambiguity rather than a heuristic.
+
+    Pairs handled: O↔0  I↔1  D↔O(between letters)
+    Each substitution is made independently; the result set stays small because
+    we only generate one substitution per character position.
+    """
     if not cleaned:
         return []
     text = clean_plate_ocr_text(cleaned)
     if not text or not text.isascii():
         return [text] if text else []
-    variants = {text}
+
+    _FLIP: dict[str, str] = {"O": "0", "0": "O", "I": "1", "1": "I", "D": "O"}
+
+    variants: set[str] = {text}
     chars = list(text)
     for i, ch in enumerate(chars):
-        if i == 0 or i + 1 >= len(chars):
+        flip = _FLIP.get(ch)
+        if flip is None:
             continue
-        left, right = chars[i - 1], chars[i + 1]
-        if not (left.isalpha() and right.isalpha()):
-            continue
-        if ch == "O":
-            chars[i] = "D"
-            variants.add("".join(chars))
-            chars[i] = "O"
-        elif ch == "D":
-            chars[i] = "O"
-            variants.add("".join(chars))
-            chars[i] = "D"
+        # D↔O only makes sense between two letters (keep the original guard).
+        if ch in ("D", "O") and flip in ("D", "O"):
+            left = chars[i - 1] if i > 0 else ""
+            right = chars[i + 1] if i + 1 < len(chars) else ""
+            if not (left.isalpha() and right.isalpha()):
+                continue
+        chars[i] = flip
+        variants.add("".join(chars))
+        chars[i] = ch  # restore
     return list(variants)
-
-
-def fix_ocr_confusions(raw: str | None) -> str:
-    """Map common misreads (e.g. pipe → capital I) before junk removal."""
-    if not raw:
-        return ""
-    text = raw.strip().translate(_OCR_CHAR_FIXES)
-    return fix_latin_ambiguous_chars(text)
 
 
 def sanitize_plate_ocr_text(raw: str | None) -> str:

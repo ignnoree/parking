@@ -11,18 +11,15 @@ def test_pipe_mapped_to_capital_i():
     assert fix_ocr_confusions("T|07") == "TI07"
 
 
-def test_one_to_i_beside_letters():
-    assert sanitize_plate_ocr_text("AB1C456") == "ABIC456"
-    assert sanitize_plate_ocr_text("1ABC") == "IABC"
-
-
-def test_one_to_i_in_letter_heavy_plate():
-    """1 surrounded by letters in letter-heavy plates becomes I (MW51VSU -> MW5IVSU)."""
-    assert sanitize_plate_ocr_text("MW51VSU") == "MW5IVSU"
-    assert sanitize_plate_ocr_text("EY61NBG") == "EY6INBG"
-    assert sanitize_plate_ocr_text("FJ14ZHY") == "FJI4ZHY"
-    assert sanitize_plate_ocr_text("LM13VCV") == "LMI3VCV"
-    assert sanitize_plate_ocr_text("GX15OGJ") == "GXI5OGJ"
+def test_one_not_rewritten():
+    """1/I left as OCR returned; ambiguity handled by OCR ranking, not heuristics."""
+    assert sanitize_plate_ocr_text("AB1C456") == "AB1C456"
+    assert sanitize_plate_ocr_text("1ABC") == "1ABC"
+    assert sanitize_plate_ocr_text("MW51VSU") == "MW51VSU"
+    assert sanitize_plate_ocr_text("EY61NBG") == "EY61NBG"
+    assert sanitize_plate_ocr_text("FJ14ZHY") == "FJ14ZHY"
+    assert sanitize_plate_ocr_text("LM13VCV") == "LM13VCV"
+    assert sanitize_plate_ocr_text("GX15OGJ") == "GX15OGJ"
 
 
 def test_one_kept_in_digit_heavy_plate():
@@ -37,9 +34,11 @@ def test_one_kept_inside_long_digit_run():
     assert sanitize_plate_ocr_text("ABI125") == "ABI125"
 
 
-def test_zero_o_by_context():
-    assert sanitize_plate_ocr_text("AB0CD") == "ABOCD"
-    assert sanitize_plate_ocr_text("12O34") == "12034"
+def test_zero_o_not_rewritten():
+    """0/O left as OCR returned; ambiguity handled by OCR ranking, not heuristics."""
+    assert sanitize_plate_ocr_text("AB0CD") == "AB0CD"
+    assert sanitize_plate_ocr_text("12O34") == "12O34"
+    assert sanitize_plate_ocr_text("TSO7JS9670") == "TSO7JS9670"
 
 
 def test_d_o_variants():
