@@ -173,6 +173,16 @@ def plate_ocr_workers() -> int:
     return max(1, int(os.environ.get("PLATE_OCR_WORKERS", "1")))
 
 
+def camera_video_loop_enabled() -> bool:
+    """When true, local video file sources rewind to frame 0 after EOF."""
+    return os.environ.get("CAMERA_VIDEO_LOOP", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _open_capture(source: int | str) -> cv2.VideoCapture:
     if (
         _is_network_source(source)
@@ -625,11 +635,15 @@ def _drainer_loop(
     fail_streak = 0
     last_detect = 0.0
     next_frame_at = 0.0
+    video_finished = False
     while not stop_event.is_set():
         if cap is None or not cap.isOpened():
             if cap is not None:
                 cap.release()
                 cap = None
+            if config.file_source and not camera_video_loop_enabled() and video_finished:
+                stop_event.wait(0.5)
+                continue
             if is_primary:
                 _clear_latest_frame()
                 set_camera_disconnected()
@@ -646,6 +660,7 @@ def _drainer_loop(
                 continue
             fail_streak = 0
             next_frame_at = time.monotonic()
+            video_finished = False
             logger.info(
                 "Camera opened: id=%s name=%r source=%r scan_interval=%.1fs",
                 config.id,
@@ -662,10 +677,28 @@ def _drainer_loop(
 
         ok, frame = _read_drainer_burst(cap, config.network)
         if not ok or frame is None:
-            if config.file_source and cap is not None and _rewind_capture(cap):
+            if (
+                config.file_source
+                and cap is not None
+                and camera_video_loop_enabled()
+                and _rewind_capture(cap)
+            ):
                 fail_streak = 0
                 next_frame_at = time.monotonic()
                 logger.debug("Video file ended; looping camera_id=%s", config.id)
+                continue
+            if config.file_source and cap is not None and not camera_video_loop_enabled():
+                logger.info(
+                    "Video file finished (CAMERA_VIDEO_LOOP=false) camera_id=%s",
+                    config.id,
+                )
+                cap.release()
+                cap = None
+                video_finished = True
+                if is_primary:
+                    _clear_latest_frame()
+                    set_camera_disconnected()
+                stop_event.wait(0.5)
                 continue
             fail_streak += 1
             if fail_streak >= 30:
