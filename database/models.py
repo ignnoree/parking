@@ -75,7 +75,7 @@ class SoftwareLog(Base):
     message: Mapped[str] = mapped_column(Text)
     metadata_: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
     logged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
+#add which user 
 
 class Camera(Base):
     __tablename__ = "cameras"
@@ -84,14 +84,13 @@ class Camera(Base):
     name: Mapped[str] = mapped_column(String(128))
     protocol: Mapped[str] = mapped_column(String(16))
     source: Mapped[str] = mapped_column(String(512))
-    gate_role: Mapped[str] = mapped_column(String(16), server_default="entry", default="entry")
+    direction: Mapped[str] = mapped_column(String(16), server_default="entry", default="entry")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     light_profile: Mapped[str] = mapped_column(String(32), server_default="normal", default="normal")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
 
 class Setting(Base):
     __tablename__ = "settings"

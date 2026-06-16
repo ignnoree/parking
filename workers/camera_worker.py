@@ -51,7 +51,7 @@ class CameraConfig:
     id: int
     name: str
     source: int | str
-    gate_role: str
+    direction: str
     light_profile: str
     frame_interval_seconds: float
     network: bool
@@ -205,7 +205,7 @@ def _config_from_row(row: dict) -> CameraConfig | None:
         id=int(row["id"]),
         name=str(row.get("name") or f"Camera {row['id']}"),
         source=source,
-        gate_role=str(row.get("gate_role") or "entry"),
+        direction=str(row.get("direction") or "entry"),
         light_profile=str(row.get("light_profile") or "normal"),
         frame_interval_seconds=interval,
         network=_is_network_source(source),
@@ -273,13 +273,20 @@ def _route_results_through_tracker(
         if decision is None or decision.tier != "uncertain":
             return
         timing = tracker.log_timing_for_track(track, now=now)
+        # The expired track's box is from a previous scan; frame_path is the
+        # current scan — using them together produces a crop of the wrong area
+        # (ground, sky, or another car). Store the last-known box in timing for
+        # audit purposes and skip the crop (snapshot falls back to source frame).
+        last_box = box_for_log(decision.read, track) or dict(track.box)
+        timing = dict(timing or {})
+        timing["last_known_box"] = last_box
         log_uncertain_track_event(
             frame_path,
             direction=job.direction,
             plate_normalized=str(decision.read.get("plate_normalized") or ""),
             plate_text=str(decision.read.get("plate_text") or ""),
             confidence=float(decision.read.get("confidence") or 0),
-            box=box_for_log(decision.read, track) or dict(track.box),
+            box=None,
             timing=timing,
             skip_reason=decision.reason,
             track_id=track.track_id,
@@ -290,7 +297,9 @@ def _route_results_through_tracker(
         if decision.tier != "confirmed":
             return
         timing = tracker.log_timing(track.track_id, now=now)
-        log_box = box_for_log(decision.read, track) or dict(track.box)
+        # Use the track's current IoU-updated box (matches the current frame)
+        # rather than the OCR-read box, which may be from an older scan position.
+        log_box = dict(track.box) if track.box.get("w") and track.box.get("h") else box_for_log(decision.read, track)
         row = build_result_row(
             {
                 "plate_text": decision.read.get("plate_text"),
@@ -611,7 +620,7 @@ def _drainer_loop(
                 _DetectJob(
                     frame=frame.copy(),
                     camera_id=config.id,
-                    direction=config.gate_role,
+                    direction=config.direction,
                     light_profile=config.light_profile,
                 ),
                 detect_queue,
@@ -712,7 +721,7 @@ def get_worker_status() -> dict:
                 {
                     "id": cfg.id,
                     "name": cfg.name,
-                    "gate_role": cfg.gate_role,
+                    "direction": cfg.direction,
                     "light_profile": cfg.light_profile,
                     "is_primary": cfg.id == runtime.primary_camera_id,
                 }

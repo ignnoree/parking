@@ -7,61 +7,49 @@ import numpy as np
 
 from helpers.plate_crop import crop_tight_plate
 
-_CHROMATIC = ("blue", "red", "green", "yellow")
+# HSV hue ranges (0-179 in OpenCV) for each chromatic plate color.
+_CHROMATIC_RANGES: dict[str, list[tuple[int, int]]] = {
+    "red":    [(0, 12), (163, 179)],
+    "yellow": [(15, 42)],
+    "green":  [(40, 90)],
+    "blue":   [(90, 135)],
+}
 
 
-def _plate_background_pixels(crop_bgr: np.ndarray) -> np.ndarray:
+def _sample_plate_hsv(crop_bgr: np.ndarray) -> np.ndarray | None:
     """
-    Sample pixels from the plate laminate only (top/bottom bands, center width).
-    Avoids outer edges (car paint) and dark OCR characters.
+    Extract plate-background pixels from the interior of a tight plate crop.
+
+    Steps:
+      1. Trim 12% from each horizontal edge and 10% from top/bottom to remove
+         car-body paint bleed at the crop border.
+      2. Apply a 3×3 median blur to suppress JPEG compression artifacts and
+         thin character-stroke edges that bleed into the background.
+      3. Convert to HSV and keep only pixels whose Value is in [50, 240]
+         (not dark characters/shadows, not blown-out specular reflections).
     """
     h, w = crop_bgr.shape[:2]
-    band_h = max(1, int(h * 0.22))
-    x1 = int(w * 0.18)
-    x2 = max(x1 + 1, int(w * 0.82))
+    bx = max(1, int(w * 0.12))
+    by = max(1, int(h * 0.10))
+    roi = crop_bgr[by : max(by + 1, h - by), bx : max(bx + 1, w - bx)]
+    if roi.size == 0:
+        return None
 
-    strips = [
-        crop_bgr[:band_h, x1:x2],
-        crop_bgr[h - band_h :, x1:x2],
-    ]
-    pixels = np.concatenate(
-        [strip.reshape(-1, 3) for strip in strips if strip.size > 0],
-        axis=0,
-    )
-    if pixels.size == 0:
-        return pixels
+    blurred = cv2.medianBlur(roi, 3)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
-    hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2HSV).reshape(
-        -1, 3
-    )
-    # Drop black/dark OCR glyphs; keep plate background laminate.
-    keep = hsv[:, 2] >= 60
-    return pixels[keep] if np.any(keep) else pixels
+    v = hsv[:, :, 2]
+    mask = (v >= 50) & (v <= 240)
+    if not np.any(mask):
+        return None
 
-
-def _color_fractions(hsv: np.ndarray) -> dict[str, float]:
-    """Share of background pixels in each color bucket."""
-    if hsv.size == 0:
-        return {}
-    h = hsv[:, 0].astype(np.float32)
-    s = hsv[:, 1].astype(np.float32)
-    v = hsv[:, 2].astype(np.float32)
-    return {
-        "white": float(np.mean((s < 72) & (v > 65))),
-        "bright_white": float(np.mean((s < 60) & (v > 95))),
-        "low_sat": float(np.mean(s < 72)),
-        "blue": float(np.mean((h >= 95) & (h <= 130) & (s >= 85) & (v >= 70))),
-        "red": float(np.mean(((h <= 10) | (h >= 170)) & (s >= 85) & (v >= 70))),
-        "green": float(np.mean((h >= 45) & (h <= 85) & (s >= 80) & (v >= 70))),
-        "yellow": float(np.mean((h >= 18) & (h <= 42) & (s >= 85) & (v >= 80))),
-        "black": float(np.mean(v < 45)),
-    }
+    return hsv[mask]
 
 
 def classify_plate_background_color(crop_bgr: np.ndarray | None) -> str:
     """
-    Estimate plate background color from tight plate crop (not padded car body).
-    Returns white, red, green, blue, yellow, black, or unknown.
+    Estimate plate background color from a tight plate crop.
+    Returns: white, red, green, blue, yellow, black, or unknown.
     """
     if crop_bgr is None or crop_bgr.size == 0:
         return "unknown"
@@ -70,32 +58,46 @@ def classify_plate_background_color(crop_bgr: np.ndarray | None) -> str:
     if h < 4 or w < 8:
         return "unknown"
 
-    pixels = _plate_background_pixels(crop_bgr)
-    if pixels.size == 0:
+    pixels = _sample_plate_hsv(crop_bgr)
+    if pixels is None or len(pixels) < 10:
         return "unknown"
 
-    hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2HSV).reshape(
-        -1, 3
-    )
-    fr = _color_fractions(hsv)
-    if not fr:
-        return "unknown"
+    hue = pixels[:, 0].astype(np.float32)
+    sat = pixels[:, 1].astype(np.float32)
+    val = pixels[:, 2].astype(np.float32)
 
-    if fr["black"] > 0.5:
+    # Black plates: median brightness very low even after dark-pixel exclusion.
+    if float(np.median(val)) < 55:
         return "black"
 
-    chroma = {name: fr[name] for name in _CHROMATIC}
-    best_chroma = max(chroma, key=chroma.get)
-    best_frac = chroma[best_chroma]
+    # Saturation weight: pixels with sat<=30 contribute ~0, sat=255 contributes 1.
+    # This means strongly-saturated pixels dominate chromatic scoring, while
+    # grey/silver/white pixels are naturally down-weighted.
+    sat_w = np.maximum(0.0, sat - 30.0) / 225.0
 
-    # Chromatic laminate must clearly dominate (avoids blue car paint bleeding in).
-    if best_frac >= 0.52 and best_frac > fr["white"] + 0.12:
-        return best_chroma
+    scores: dict[str, float] = {}
+    for color, ranges in _CHROMATIC_RANGES.items():
+        in_range = np.zeros(len(hue), dtype=bool)
+        for lo, hi in ranges:
+            in_range |= (hue >= lo) & (hue <= hi)
+        # Also require minimum saturation so pale tints don't trigger chromatic hits.
+        in_range &= sat >= 50
+        scores[color] = float(np.sum(sat_w[in_range]))
 
-    if fr["white"] >= 0.38 or fr["bright_white"] >= 0.25 or fr["low_sat"] >= 0.62:
-        return "white"
+    total_sat = float(np.sum(sat_w)) + 1e-9
+    best_color = max(scores, key=scores.get)
+    best_score = scores[best_color] / total_sat
 
-    if fr["white"] >= 0.25 and best_frac < 0.35:
+    # Achromatic fraction: pixels with low saturation (white/grey/silver).
+    achromatic = float(np.mean(sat < 55))
+
+    # Chromatic color wins when it accounts for ≥30% of saturation-weighted
+    # pixels and beats the achromatic mass clearly.
+    if best_score >= 0.30 and best_score >= achromatic * 0.55:
+        return best_color
+
+    # Fall back to white for low-saturation or bright plates.
+    if achromatic >= 0.45 or float(np.median(val)) >= 120:
         return "white"
 
     return "unknown"

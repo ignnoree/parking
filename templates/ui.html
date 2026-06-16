@@ -160,6 +160,19 @@
         .legend-guest::before { background: #eab308; }
         .legend-unknown::before { background: #ef4444; }
         .legend-uncertain::before { background: #eab308; }
+        .color-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            vertical-align: middle;
+            margin-right: 0.3rem;
+            border: 1px solid rgba(255,255,255,0.18);
+            flex-shrink: 0;
+        }
+        .plate-cell { display: flex; align-items: center; gap: 0.3rem; }
+        .owner-cell { font-size: 0.8rem; color: #c8d8e8; }
+        .spot-cell  { font-size: 0.75rem; color: #9eb4c8; font-family: ui-monospace, monospace; }
     </style>
 </head>
 <body>
@@ -190,7 +203,8 @@
                         <th>Plate</th>
                         <th>Direction</th>
                         <th>Status</th>
-                        <th>Guest</th>
+                        <th>Owner</th>
+                        <th>Spot</th>
                         <th>Photo</th>
                     </tr>
                 </thead>
@@ -282,6 +296,45 @@
             try { return new Date(iso).toLocaleString(); } catch (_) { return iso; }
         }
 
+        const COLOR_CSS = {
+            white:   "#e8e8e8",
+            yellow:  "#f5c518",
+            blue:    "#2563eb",
+            green:   "#16a34a",
+            red:     "#dc2626",
+            black:   "#374151",
+            unknown: "#4b5563",
+        };
+
+        function colorDot(color) {
+            if (!color || color === "unknown" || color === "default") return "";
+            const bg = COLOR_CSS[color] || "#4b5563";
+            const title = color.charAt(0).toUpperCase() + color.slice(1);
+            return "<span class='color-dot' style='background:" + bg + "' title='Plate: " + title + "'></span>";
+        }
+
+        function plateCell(row) {
+            const plate = escapeHtml(row.plate_number || row.plate_normalized || "—");
+            const dot = colorDot(row.plate_color);
+            return "<div class='plate-cell mono'>" + dot + plate + "</div>";
+        }
+
+        function ownerCell(row) {
+            if (!row.owner_name && !row.owner_lastname) return "<span style='color:#4b5563'>—</span>";
+            const parts = [row.owner_name, row.owner_lastname].filter(Boolean);
+            return "<span class='owner-cell'>" + escapeHtml(parts.join(" ")) + "</span>";
+        }
+
+        function spotCell(row) {
+            const parts = [];
+            if (row.floor_number)  parts.push("F" + row.floor_number);
+            if (row.door_number)   parts.push("D" + row.door_number);
+            if (row.parking_spot)  parts.push("#" + row.parking_spot);
+            if (row.car_model)     parts.push(row.car_model);
+            if (!parts.length) return "<span style='color:#4b5563'>—</span>";
+            return "<span class='spot-cell'>" + escapeHtml(parts.join(" · ")) + "</span>";
+        }
+
         function snapshotCell(row) {
             if (!row.snapshot_url) return "—";
             return (
@@ -296,7 +349,7 @@
             currentPage = page;
             if (!silent) {
                 logsMeta.textContent = "Loading…";
-                logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Loading…</td></tr>";
+                logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Loading…</td></tr>";
             }
 
             try {
@@ -306,7 +359,7 @@
                 );
                 if (res.status === 401) {
                     logsMeta.textContent = "Log in required.";
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Please <a href='/login' style='color:#7eb8ff'>log in</a>.</td></tr>";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Please <a href='/login' style='color:#7eb8ff'>log in</a>.</td></tr>";
                     prevBtn.disabled = true;
                     nextBtn.disabled = true;
                     return;
@@ -322,24 +375,25 @@
                 nextBtn.disabled = !data.has_next;
 
                 if (!rows.length) {
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>No parking logs yet.</td></tr>";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>No parking logs yet.</td></tr>";
                     return;
                 }
 
                 logsBody.innerHTML = rows.map((r) => (
                     "<tr>" +
                     "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
-                    "<td class='mono'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
+                    "<td>" + plateCell(r) + "</td>" +
                     "<td>" + directionPill(r.direction) + "</td>" +
                     "<td>" + statusPill(r) + "</td>" +
-                    "<td>" + (r.is_guest ? "Yes" : "—") + "</td>" +
+                    "<td>" + ownerCell(r) + "</td>" +
+                    "<td>" + spotCell(r) + "</td>" +
                     "<td>" + snapshotCell(r) + "</td>" +
                     "</tr>"
                 )).join("");
             } catch (_) {
                 if (!silent) {
                     logsMeta.textContent = "Failed to load logs.";
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='6'>Network error.</td></tr>";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Network error.</td></tr>";
                 }
             }
         }

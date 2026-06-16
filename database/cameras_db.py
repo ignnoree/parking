@@ -9,7 +9,7 @@ from database.db import instance_to_dict, session_scope
 from database.models import Camera
 
 VALID_PROTOCOLS = ("rtsp", "http", "usb")
-VALID_GATE_ROLES = ("entry", "exit")
+VALID_DIRECTIONS = ("entry", "exit")
 VALID_LIGHT_PROFILES = ("normal", "high_glare", "low_light")
 
 
@@ -87,16 +87,16 @@ def insert_camera(
     name: str,
     protocol: str,
     source: str,
-    gate_role: str = "entry",
+    direction: str = "entry",
     is_enabled: bool = True,
     light_profile: str = "normal",
 ) -> int | None:
     protocol = protocol.strip().lower()
-    gate_role = gate_role.strip().lower()
+    direction = direction.strip().lower()
     light_profile = light_profile.strip().lower()
     if protocol not in VALID_PROTOCOLS:
         return None
-    if gate_role not in VALID_GATE_ROLES:
+    if direction not in VALID_DIRECTIONS:
         return None
     if light_profile not in VALID_LIGHT_PROFILES:
         return None
@@ -112,7 +112,7 @@ def insert_camera(
             name=name.strip(),
             protocol=protocol,
             source=source.strip(),
-            gate_role=gate_role,
+            direction=direction,
             is_enabled=is_enabled,
             light_profile=light_profile,
         )
@@ -126,7 +126,7 @@ def update_camera(camera_id: int, **fields) -> bool:
         "name",
         "protocol",
         "source",
-        "gate_role",
+        "direction",
         "is_enabled",
         "light_profile",
     }
@@ -139,11 +139,11 @@ def update_camera(camera_id: int, **fields) -> bool:
         if protocol not in VALID_PROTOCOLS:
             return False
         updates["protocol"] = protocol
-    if "gate_role" in updates:
-        gate_role = str(updates["gate_role"]).strip().lower()
-        if gate_role not in VALID_GATE_ROLES:
+    if "direction" in updates:
+        direction = str(updates["direction"]).strip().lower()
+        if direction not in VALID_DIRECTIONS:
             return False
-        updates["gate_role"] = gate_role
+        updates["direction"] = direction
     if "light_profile" in updates:
         light_profile = str(updates["light_profile"]).strip().lower()
         if light_profile not in VALID_LIGHT_PROFILES:
@@ -200,14 +200,14 @@ def bootstrap_cameras_from_env() -> None:
                 name="Entry gate",
                 protocol=infer_protocol(entry_url),
                 source=entry_url,
-                gate_role="entry",
+                direction="entry",
             )
         if exit_url:
             insert_camera(
                 name="Exit gate",
                 protocol=infer_protocol(exit_url),
                 source=exit_url,
-                gate_role="exit",
+                direction="exit",
             )
         return
 
@@ -215,11 +215,11 @@ def bootstrap_cameras_from_env() -> None:
     if not url:
         return
     direction = os.environ.get("GATE_DIRECTION", "entry").strip().lower()
-    if direction not in VALID_GATE_ROLES:
+    if direction not in VALID_DIRECTIONS:
         direction = "entry"
     insert_camera(
         name="Main gate",
         protocol=infer_protocol(url),
         source=url,
-        gate_role=direction,
+        direction=direction,
     )

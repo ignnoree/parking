@@ -167,7 +167,7 @@
                             <th>Name</th>
                             <th>Protocol</th>
                             <th>Source</th>
-                            <th>Gate</th>
+                            <th>Direction</th>
                             <th>Light</th>
                             <th>Status</th>
                             <th></th>
@@ -190,8 +190,8 @@
                         </select>
                     </label>
                     <label>Source<input id="source" required placeholder="rtsp://… or 0 for USB"></label>
-                    <label>Gate role
-                        <select id="gate_role">
+                    <label>Direction
+                        <select id="direction">
                             <option value="entry">entry</option>
                             <option value="exit">exit</option>
                         </select>
@@ -479,7 +479,7 @@
                     <td>${escapeHtml(c.name)}</td>
                     <td>${escapeHtml(c.protocol)}</td>
                     <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.source)}</td>
-                    <td>${escapeHtml(c.gate_role)}</td>
+                    <td>${escapeHtml(c.direction)}</td>
                     <td>${escapeHtml(c.light_profile)}</td>
                     <td><span class="badge ${c.is_enabled ? "badge-on" : "badge-off"}">${c.is_enabled ? "On" : "Off"}</span></td>
                     <td>
@@ -667,7 +667,7 @@
                     <td>${escapeHtml(camera.name)}</td>
                     <td>${escapeHtml(camera.protocol)}</td>
                     <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(camera.source)}</td>
-                    <td>${escapeHtml(camera.gate_role)}</td>
+                    <td>${escapeHtml(camera.direction)}</td>
                     <td>${escapeHtml(camera.light_profile)}</td>
                     <td><span class="badge ${camera.is_enabled ? "badge-on" : "badge-off"}">${camera.is_enabled ? "On" : "Off"}</span></td>
                     <td>
@@ -706,7 +706,7 @@
                 document.getElementById("name").value = cam.name;
                 document.getElementById("protocol").value = cam.protocol;
                 document.getElementById("source").value = cam.source;
-                document.getElementById("gate_role").value = cam.gate_role;
+                document.getElementById("direction").value = cam.direction;
                 document.getElementById("light_profile").value = cam.light_profile;
                 document.getElementById("is_enabled").value = cam.is_enabled ? "true" : "false";
                 formTitle.textContent = "Edit camera";
@@ -734,7 +734,7 @@
                 name: document.getElementById("name").value.trim(),
                 protocol: document.getElementById("protocol").value,
                 source: document.getElementById("source").value.trim(),
-                gate_role: document.getElementById("gate_role").value,
+                direction: document.getElementById("direction").value,
                 light_profile: document.getElementById("light_profile").value,
                 is_enabled: document.getElementById("is_enabled").value === "true",
             };

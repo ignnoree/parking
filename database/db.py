@@ -56,6 +56,23 @@ def _apply_schema_migrations() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE cameras DROP COLUMN IF EXISTS frame_interval_seconds"))
         conn.execute(text("DELETE FROM settings WHERE key = 'CAMERA_FRAME_INTERVAL_SECONDS'"))
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'cameras'
+                          AND column_name = 'gate_role'
+                    ) THEN
+                        ALTER TABLE cameras RENAME COLUMN gate_role TO direction;
+                    END IF;
+                END $$;
+                """
+            )
+        )
 
 
 def init_db() -> None:

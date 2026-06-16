@@ -60,7 +60,7 @@ Each **drainer thread** (`_drainer_loop`, `workers/camera_worker.py` ~574) opens
                 _DetectJob(
                     frame=frame.copy(),
                     camera_id=config.id,
-                    direction=config.gate_role,
+                    direction=config.direction,
                     light_profile=config.light_profile,
                 ),
                 detect_queue,

@@ -138,7 +138,7 @@ Many app routes use `{"status": "error", "message": "..."}` instead of `{"error"
   "camera_worker": {
     "running": true,
     "camera_count": 1,
-    "cameras": [{ "id": 1, "name": "Gate", "gate_role": "entry", "light_profile": "normal", "is_primary": true }],
+    "cameras": [{ "id": 1, "name": "Gate", "direction": "entry", "light_profile": "normal", "is_primary": true }],
     "primary_camera_id": 1,
     "ocr_busy": false,
     "ocr_worker": { "pid": 12345, "alive": true, "busy": false }
@@ -341,7 +341,7 @@ Create/update/delete triggers `reload_cameras()` (worker restart after in-flight
 | `name` | Display name |
 | `protocol` | `rtsp`, `http`, `usb` |
 | `source` | URL, file path, or USB index |
-| `gate_role` | `entry`, `exit` |
+| `direction` | `entry`, `exit` |
 | `light_profile` | `normal`, `high_glare`, `low_light` |
 | `is_enabled` | boolean |
 
@@ -356,7 +356,7 @@ Scan interval is **not** per-camera in the API — it comes from env `CAMERA_FRA
   "name": "Main gate",
   "protocol": "rtsp",
   "source": "rtsp://user:pass@192.168.1.10/stream",
-  "gate_role": "entry",
+  "direction": "entry",
   "light_profile": "normal",
   "is_enabled": true
 }
@@ -404,7 +404,7 @@ Values are JSON objects, typically `{"value": "600"}`.
   "allowed_keys": ["PARKING_LOG_COOLDOWN_SECONDS", "light_profile_global"],
   "options": {
     "protocols": ["rtsp", "http", "usb"],
-    "gate_roles": ["entry", "exit"],
+    "directions": ["entry", "exit"],
     "light_profiles": ["normal", "high_glare", "low_light"]
   }
 }

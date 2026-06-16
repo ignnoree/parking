@@ -23,7 +23,7 @@ Preview MJPEG uses a separate thread; plate detection does not block live view.
 | PostgreSQL `cameras` | Primary — manage via `/admin` or `/api/cameras` |
 | `.env` `CAMERA_URL` / `CAMERA_URL_ENTRY` / `CAMERA_URL_EXIT` | Bootstrap only when `cameras` table is empty |
 
-Per-camera fields: `gate_role` (entry/exit), `light_profile`, `frame_interval_seconds`, `is_enabled`.
+Per-camera fields: `direction` (entry/exit), `light_profile`, `frame_interval_seconds`, `is_enabled`.
 
 Global settings (PostgreSQL `settings`): scan interval default, log cooldown, `light_profile_global`.
 

@@ -18,13 +18,14 @@ from database.logs_db import (
 from database.vehicles_db import (
     count_vehicles,
     find_vehicle_by_normalized,
+    get_vehicles_by_ids,
     insert_vehicle,
     list_vehicles,
     soft_delete_vehicle,
 )
 from helpers.enroll_images import save_reference_image
 from database.cameras_db import (
-    VALID_GATE_ROLES,
+    VALID_DIRECTIONS,
     VALID_LIGHT_PROFILES,
     VALID_PROTOCOLS,
     delete_camera,
@@ -154,7 +155,7 @@ def cameras_create_api():
         name=str(data.get("name") or "").strip(),
         protocol=protocol,
         source=source,
-        gate_role=str(data.get("gate_role") or "entry").strip().lower(),
+        direction=str(data.get("direction") or "entry").strip().lower(),
         is_enabled=bool(data.get("is_enabled", True)),
         light_profile=str(data.get("light_profile") or "normal").strip().lower(),
     )
@@ -228,7 +229,7 @@ def settings_list_api():
             "allowed_keys": list(BOOTSTRAP_KEYS),
             "options": {
                 "protocols": list(VALID_PROTOCOLS),
-                "gate_roles": list(VALID_GATE_ROLES),
+                "directions": list(VALID_DIRECTIONS),
                 "light_profiles": list(VALID_LIGHT_PROFILES),
             },
         }
@@ -432,6 +433,9 @@ def parking_logs_api():
         include_deleted_vehicles=include_deleted,
         **active,
     )
+    vehicle_ids = [int(r["vehicle_id"]) for r in logs if r.get("vehicle_id") is not None]
+    vehicles_map = get_vehicles_by_ids(vehicle_ids)
+
     for row in logs:
         snap = row.get("snapshot_path")
         row["snapshot_url"] = f"/api/parking-snapshot?path={quote(str(snap))}" if snap else None
@@ -441,6 +445,14 @@ def parking_logs_api():
         row["source_snapshot_url"] = (
             f"/api/parking-snapshot?path={quote(str(source_path))}" if source_path else None
         )
+        vid = row.get("vehicle_id")
+        v = vehicles_map.get(int(vid)) if vid is not None else None
+        row["owner_name"] = v.get("owner_name") if v else None
+        row["owner_lastname"] = v.get("owner_lastname") if v else None
+        row["car_model"] = v.get("car_model") if v else None
+        row["parking_spot"] = v.get("parking_spot") if v else None
+        row["floor_number"] = v.get("floor_number") if v else None
+        row["door_number"] = v.get("door_number") if v else None
     return jsonify(
         {
             "total": total,
