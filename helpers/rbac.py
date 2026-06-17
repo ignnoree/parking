@@ -4,16 +4,14 @@ from flask import jsonify
 from flask_jwt_extended import get_jwt_identity
 
 from database.admin_db import ROLE_WORKER, get_admin_by_id
+from helpers.uuid_utils import parse_uuid
 
 
 def get_current_admin() -> dict | None:
     raw = get_jwt_identity()
     if raw is None:
         return None
-    try:
-        return get_admin_by_id(int(raw))
-    except (TypeError, ValueError):
-        return None
+    return get_admin_by_id(raw)
 
 
 def require_admin_roles(*allowed_roles: str):

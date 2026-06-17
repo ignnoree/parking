@@ -3,136 +3,385 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Register Vehicle | Parking ANPR</title>
+    <title>Register Vehicle — ParkGuard</title>
     <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --text-subtle: #6e7681;
+            --accent: #4493f8;
+            --accent-hover: #58a6ff;
+            --accent-dim: rgba(68,147,248,.12);
+            --green: #3fb950;
+            --green-dim: rgba(63,185,80,.12);
+            --red: #f85149;
+            --red-dim: rgba(248,81,73,.12);
+            --r: 6px;
+            --r-lg: 10px;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f7fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* ─── TOPBAR ─── */
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            padding: 0 1.5rem;
+            height: 54px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            gap: 1rem;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+            color: var(--text);
+            font-weight: 700;
+            font-size: 0.975rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .brand-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: 7px;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 1rem;
+            font-size: 0.8rem;
+            font-weight: 800;
+            color: #fff;
         }
-        .container {
-            max-width: 560px;
-            width: 100%;
-            background: white;
-            border-radius: 1rem;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+
+        .topbar-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.1rem;
+            flex: 1;
+        }
+
+        .nav-link {
+            padding: 0.35rem 0.7rem;
+            border-radius: var(--r);
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.825rem;
+            font-weight: 500;
+            transition: background .12s, color .12s;
+        }
+
+        .nav-link:hover { background: var(--surface-2); color: var(--text); }
+        .nav-link.active { background: var(--accent-dim); color: var(--accent); }
+
+        /* ─── LAYOUT ─── */
+        .main {
+            max-width: 680px;
+            margin: 0 auto;
+            padding: 1.5rem 1.5rem;
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        .page-header {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .page-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .page-subtitle {
+            font-size: 0.825rem;
+            color: var(--text-muted);
+        }
+
+        /* ─── CARD ─── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
             overflow: hidden;
         }
-        .header { padding: 1.5rem 2rem; border-bottom: 1px solid #eef2f6; }
-        .header h1 { font-size: 1.4rem; color: #1a2634; margin-bottom: 0.25rem; }
-        .header p { color: #6b7a88; font-size: 0.9rem; }
-        .header a { color: #3b82f6; text-decoration: none; font-size: 0.85rem; }
-        form { padding: 2rem; display: grid; gap: 1rem; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .full { grid-column: span 2; }
-        .field { display: grid; gap: 0.4rem; }
-        label {
-            font-size: 0.8rem;
+
+        .card-section {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-section:last-child { border-bottom: none; }
+
+        .section-label {
+            font-size: 0.72rem;
             font-weight: 600;
-            color: #4a5a68;
             text-transform: uppercase;
-            letter-spacing: 0.02em;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
         }
+
+        /* ─── FORM ELEMENTS ─── */
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .field-full { grid-column: span 2; }
+
+        .field { display: grid; gap: 0.35rem; }
+
+        label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
         input, select {
-            padding: 0.7rem 0.85rem;
-            border: 1px solid #dde3e9;
-            border-radius: 0.5rem;
-            font-size: 0.95rem;
+            padding: 0.6rem 0.8rem;
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.875rem;
             font-family: inherit;
+            transition: border-color .12s, box-shadow .12s;
+            width: 100%;
         }
+
         input:focus, select:focus {
             outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim);
         }
-        .radio-row { display: flex; gap: 1.25rem; flex-wrap: wrap; }
-        .radio-row label { text-transform: none; font-weight: 500; display: flex; gap: 0.35rem; align-items: center; }
-        button {
-            border: none;
-            border-radius: 0.6rem;
-            background: #1a2634;
-            color: #fff;
-            font-weight: 600;
-            padding: 0.85rem 1rem;
+
+        input::placeholder { color: var(--text-subtle); }
+
+        select option { background: var(--surface-2); }
+
+        input[type="file"] {
+            padding: 0.5rem 0.8rem;
             cursor: pointer;
+            color: var(--text-muted);
         }
-        button:hover { background: #253549; }
-        button:disabled { opacity: 0.6; cursor: not-allowed; }
-        .message { display: none; margin: 0 2rem 2rem; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.88rem; }
+
+        /* ─── TYPE SELECTOR ─── */
+        .type-selector {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .type-option {
+            position: relative;
+        }
+
+        .type-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .type-option label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.65rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            cursor: pointer;
+            font-size: 0.8rem;
+            text-transform: none;
+            letter-spacing: 0;
+            font-weight: 500;
+            color: var(--text-muted);
+            background: var(--surface-2);
+            transition: border-color .12s, background .12s, color .12s;
+            gap: 0.4rem;
+        }
+
+        .type-option input:checked + label {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+
+        .type-option label:hover {
+            border-color: var(--text-muted);
+            color: var(--text);
+        }
+
+        /* ─── BUTTONS ─── */
+        .btn-submit {
+            width: 100%;
+            padding: 0.7rem 1rem;
+            border: none;
+            border-radius: var(--r);
+            background: var(--accent);
+            color: #fff;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background .15s;
+        }
+
+        .btn-submit:hover { background: var(--accent-hover); }
+        .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+
+        /* ─── MESSAGES ─── */
+        .message {
+            display: none;
+            padding: 0.7rem 1rem;
+            border-radius: var(--r);
+            font-size: 0.825rem;
+        }
+
         .message.show { display: block; }
-        .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-        .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+        .message.error   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(248,81,73,.25); }
+        .message.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+
         #guestFields { display: none; }
-        #guestFields.open { display: block; }
+        #guestFields.open { display: contents; }
+
+        @media (max-width: 560px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .field-full { grid-column: span 1; }
+            .type-selector { grid-template-columns: 1fr 1fr; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Register vehicle</h1>
-            <p>Add a resident or guest plate to the allowed list.</p>
-            <p style="margin-top:0.5rem;"><a href="/">← Back to monitor</a> · <a href="/login">Login</a></p>
+    <header class="topbar">
+        <a href="/" class="brand">
+            <div class="brand-icon">P</div>
+            ParkGuard
+        </a>
+        <nav class="topbar-nav">
+            <a href="/" class="nav-link">Monitor</a>
+            <a href="/vehicles" class="nav-link">Vehicles</a>
+            <a href="/submit" class="nav-link active">Register</a>
+            <a href="/admin" class="nav-link">Admin</a>
+            <a href="/login" class="nav-link">Login</a>
+        </nav>
+    </header>
+
+    <main class="main">
+        <div class="page-header">
+            <div class="page-title">Register vehicle</div>
+            <div class="page-subtitle">Add a resident or guest plate to the allowed list</div>
         </div>
-        <form id="enrollForm">
-            <div class="field full">
-                <label>Vehicle type</label>
-                <div class="radio-row">
-                    <label><input type="radio" name="kind" value="resident" checked> Resident</label>
-                    <label><input type="radio" name="kind" value="guest"> Guest</label>
-                </div>
-            </div>
-            <div class="grid">
-                <div class="field full">
-                    <label for="plate_number">Plate number *</label>
-                    <input id="plate_number" name="plate_number" required placeholder="e.g. 12ب34567">
-                </div>
-                <div class="field">
-                    <label for="owner_name">Owner first name</label>
-                    <input id="owner_name" name="owner_name">
-                </div>
-                <div class="field">
-                    <label for="owner_lastname">Owner last name</label>
-                    <input id="owner_lastname" name="owner_lastname">
-                </div>
-                <div class="field">
-                    <label for="car_model">Car model</label>
-                    <input id="car_model" name="car_model" placeholder="Peugeot 206">
-                </div>
-                <div class="field">
-                    <label for="vehicle_class">Vehicle class</label>
-                    <select id="vehicle_class" name="vehicle_class">
-                        <option value="car">Car</option>
-                        <option value="motorcycle">Motorcycle</option>
-                        <option value="other">Other</option>
-                    </select>
-                </div>
-                <div class="field">
-                    <label for="door_number">Door / unit</label>
-                    <input id="door_number" name="door_number">
-                </div>
-                <div class="field">
-                    <label for="floor_number">Floor</label>
-                    <input id="floor_number" name="floor_number">
-                </div>
-                <div class="field full" id="guestFields">
-                    <label for="guest_expires_at">Guest expires at *</label>
-                    <input id="guest_expires_at" name="guest_expires_at" type="datetime-local">
-                </div>
-                <div class="field full">
-                    <label for="reference_image">Reference photo (optional)</label>
-                    <input id="reference_image" name="reference_image" type="file" accept="image/jpeg,image/png,image/webp">
-                </div>
-            </div>
-            <button type="submit" id="submitBtn">Register</button>
-        </form>
+
         <div id="errorMessage" class="message error"></div>
         <div id="successMessage" class="message success"></div>
-    </div>
+
+        <div class="card">
+            <form id="enrollForm">
+                <!-- Type -->
+                <div class="card-section">
+                    <div class="section-label">Vehicle type</div>
+                    <div class="type-selector">
+                        <div class="type-option">
+                            <input type="radio" id="kind_resident" name="kind" value="resident" checked>
+                            <label for="kind_resident">🏠 Resident</label>
+                        </div>
+                        <div class="type-option">
+                            <input type="radio" id="kind_guest" name="kind" value="guest">
+                            <label for="kind_guest">👤 Guest</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Plate & Owner -->
+                <div class="card-section">
+                    <div class="section-label">Plate & owner</div>
+                    <div class="form-grid">
+                        <div class="field field-full">
+                            <label for="plate_number">Plate number *</label>
+                            <input id="plate_number" name="plate_number" required placeholder="e.g. 12ب34567">
+                        </div>
+                        <div class="field">
+                            <label for="owner_name">First name</label>
+                            <input id="owner_name" name="owner_name" placeholder="First name">
+                        </div>
+                        <div class="field">
+                            <label for="owner_lastname">Last name</label>
+                            <input id="owner_lastname" name="owner_lastname" placeholder="Last name">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vehicle Info -->
+                <div class="card-section">
+                    <div class="section-label">Vehicle info</div>
+                    <div class="form-grid">
+                        <div class="field">
+                            <label for="car_model">Car model</label>
+                            <input id="car_model" name="car_model" placeholder="e.g. Peugeot 206">
+                        </div>
+                        <div class="field">
+                            <label for="vehicle_class">Vehicle class</label>
+                            <select id="vehicle_class" name="vehicle_class">
+                                <option value="car">Car</option>
+                                <option value="motorcycle">Motorcycle</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="door_number">Door / unit</label>
+                            <input id="door_number" name="door_number" placeholder="e.g. 204">
+                        </div>
+                        <div class="field">
+                            <label for="floor_number">Floor</label>
+                            <input id="floor_number" name="floor_number" placeholder="e.g. 3">
+                        </div>
+
+                        <!-- Guest-only fields -->
+                        <div id="guestFields" class="field field-full" style="display:none;">
+                            <label for="guest_expires_at">Guest access expires *</label>
+                            <input id="guest_expires_at" name="guest_expires_at" type="datetime-local">
+                        </div>
+
+                        <div class="field field-full">
+                            <label for="reference_image">Reference photo (optional)</label>
+                            <input id="reference_image" name="reference_image" type="file" accept="image/jpeg,image/png,image/webp">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Submit -->
+                <div class="card-section">
+                    <button type="submit" id="submitBtn" class="btn-submit">Register vehicle</button>
+                </div>
+            </form>
+        </div>
+    </main>
+
     <script>
         const enrollForm = document.getElementById("enrollForm");
         const guestFields = document.getElementById("guestFields");
@@ -158,7 +407,7 @@
 
         function syncGuestFields() {
             const isGuest = enrollForm.kind.value === "guest";
-            guestFields.classList.toggle("open", isGuest);
+            guestFields.style.display = isGuest ? "grid" : "none";
             document.getElementById("guest_expires_at").required = isGuest;
         }
 
@@ -169,6 +418,7 @@
             e.preventDefault();
             setMessage(errorMessage, "");
             submitBtn.disabled = true;
+            submitBtn.textContent = "Registering…";
             const isGuest = enrollForm.kind.value === "guest";
             const fileInput = document.getElementById("reference_image");
             const hasFile = fileInput.files && fileInput.files.length > 0;
@@ -188,6 +438,7 @@
                     if (!raw) {
                         setMessage(errorMessage, "Guest expiry date is required.");
                         submitBtn.disabled = false;
+                        submitBtn.textContent = "Register vehicle";
                         return;
                     }
                     form.append("guest_expires_at", new Date(raw).toISOString());
@@ -210,6 +461,7 @@
                     if (!raw) {
                         setMessage(errorMessage, "Guest expiry date is required.");
                         submitBtn.disabled = false;
+                        submitBtn.textContent = "Register vehicle";
                         return;
                     }
                     payload.guest_expires_at = new Date(raw).toISOString();
@@ -230,12 +482,15 @@
                 }
                 const msg = data.duplicate
                     ? "Plate already registered (vehicle_id " + data.vehicle_id + ")."
-                    : "Vehicle registered (id " + data.vehicle_id + ").";
+                    : "Vehicle registered successfully (id " + data.vehicle_id + ").";
                 setMessage(successMessage, msg);
+                enrollForm.reset();
+                syncGuestFields();
             } catch (_) {
                 setMessage(errorMessage, "Network error. Are you logged in?");
             } finally {
                 submitBtn.disabled = false;
+                submitBtn.textContent = "Register vehicle";
             }
         });
     </script>

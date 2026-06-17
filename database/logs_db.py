@@ -1,12 +1,36 @@
 import datetime
 import logging
+from uuid import UUID
 
 from sqlalchemy import func, or_, select
 
 from database.db import session_scope, instance_to_dict
-from database.models import ParkingLog, SoftwareLog, Vehicle
+from database.models import ParkingLog, Plate, SoftwareLog, Vehicle
+from database.enrollment_db import resolve_plate_lookup
+from helpers.plate_normalize import normalize_plate
+from helpers.uuid_utils import parse_uuid
 
 _logger = logging.getLogger(__name__)
+
+
+def _actor_from_request() -> tuple[UUID, str] | None:
+    """Return (admin_id, username) when called inside an authenticated Flask request."""
+    try:
+        from flask import has_request_context
+
+        if not has_request_context():
+            return None
+        from helpers.rbac import get_current_admin
+
+        admin = get_current_admin()
+        if not admin:
+            return None
+        admin_id = parse_uuid(admin["id"])
+        if admin_id is None:
+            return None
+        return admin_id, str(admin.get("username") or "")
+    except Exception:
+        return None
 
 
 def log_software_event(
@@ -15,15 +39,27 @@ def log_software_event(
     event: str | None = None,
     module: str | None = None,
     metadata: str | None = None,
-) -> int | None:
+    *,
+    admin_id: UUID | str | None = None,
+    admin_username: str | None = None,
+) -> UUID | None:
     """Mirror to terminal, then persist to software_logs (never raises to caller)."""
+    if admin_id is None and not admin_username:
+        actor = _actor_from_request()
+        if actor is not None:
+            admin_id, admin_username = actor
+    elif admin_id is not None:
+        admin_id = parse_uuid(admin_id)
+
     py_level = getattr(logging, level.upper(), logging.INFO)
+    actor_suffix = f" admin={admin_username!r}" if admin_username else ""
     _logger.log(
         py_level,
-        "[%s] %s%s",
+        "[%s] %s%s%s",
         event or "software",
         message,
         f" ({metadata})" if metadata else "",
+        actor_suffix,
     )
     try:
         with session_scope() as session:
@@ -33,6 +69,8 @@ def log_software_event(
                 module=module,
                 message=message,
                 metadata_=metadata,
+                admin_id=admin_id,
+                admin_username=admin_username,
             )
             session.add(row)
             session.flush()
@@ -48,19 +86,23 @@ def log_parking_event(
     direction: str,
     match_status: str,
     plate_number: str | None = None,
-    vehicle_id: int | None = None,
+    plate_id: UUID | str | None = None,
+    vehicle_id: UUID | str | None = None,
     is_guest: bool = False,
     confidence: float | None = None,
     snapshot_path: str | None = None,
     details: str | None = None,
-) -> int:
+) -> UUID | None:
+    pid = parse_uuid(plate_id) if plate_id is not None else None
+    vid = parse_uuid(vehicle_id) if vehicle_id is not None else None
     with session_scope() as session:
         row = ParkingLog(
             plate_normalized=plate_normalized,
             plate_number=plate_number,
             direction=direction,
             match_status=match_status,
-            vehicle_id=vehicle_id,
+            plate_id=pid,
+            vehicle_id=vid,
             is_guest=is_guest,
             confidence=confidence,
             snapshot_path=snapshot_path,
@@ -111,9 +153,12 @@ def count_software_logs(**filters) -> int:
         return int(session.scalar(stmt) or 0)
 
 
-def soft_delete_parking_log(log_id: int) -> bool:
+def soft_delete_parking_log(log_id: UUID | str) -> bool:
+    lid = parse_uuid(log_id)
+    if lid is None:
+        return False
     with session_scope() as session:
-        row = session.get(ParkingLog, log_id)
+        row = session.get(ParkingLog, lid)
         if row is None or row.deleted_at is not None:
             return False
         row.deleted_at = datetime.datetime.now(datetime.timezone.utc)
@@ -136,8 +181,48 @@ def list_software_logs(*, limit: int = 50, offset: int = 0, **filters) -> list[d
         return out
 
 
-def _deleted_vehicle_plates_subquery():
-    return select(Vehicle.plate_normalized).where(Vehicle.deleted_at.is_not(None))
+def update_parking_log_plate(log_id: UUID | str, new_plate: str) -> dict | None:
+    """
+    Correct the plate on a parking log. Re-resolves vehicle_id, match_status, and is_guest
+    against the vehicles table. Returns a result dict, or None if log not found / plate invalid.
+    Does NOT write the audit software log — caller is responsible for that.
+    """
+    lid = parse_uuid(log_id)
+    if lid is None:
+        return None
+    normalized = normalize_plate(new_plate)
+    if not normalized:
+        return None
+    with session_scope() as session:
+        row = session.get(ParkingLog, lid)
+        if row is None or row.deleted_at is not None:
+            return None
+        old_plate_number = row.plate_number
+        old_plate_normalized = row.plate_normalized
+        vehicle = resolve_plate_lookup(normalized)
+        row.plate_number = new_plate.strip()
+        row.plate_normalized = normalized
+        if vehicle is not None:
+            row.plate_id = parse_uuid(vehicle["plate_id"])
+            row.vehicle_id = parse_uuid(vehicle.get("vehicle_id")) if vehicle.get("vehicle_id") else None
+            row.match_status = "registered"
+            row.is_guest = bool(vehicle.get("is_guest"))
+        else:
+            row.plate_id = None
+            row.vehicle_id = None
+            row.match_status = "unregistered"
+            row.is_guest = False
+        return {
+            "old_plate_number": old_plate_number,
+            "old_plate_normalized": old_plate_normalized,
+            "new_plate_number": new_plate.strip(),
+            "new_plate_normalized": normalized,
+            "vehicle_found": vehicle is not None,
+        }
+
+
+def _deleted_plates_subquery():
+    return select(Plate.plate_normalized).where(Plate.deleted_at.is_not(None))
 
 
 def _parse_logged_at_filter(value: str | None):
@@ -165,7 +250,13 @@ def _apply_parking_filters(
 ):
     stmt = stmt.where(ParkingLog.deleted_at.is_(None))
     if not include_deleted_vehicles:
-        deleted_plates = _deleted_vehicle_plates_subquery()
+        deleted_plates = _deleted_plates_subquery()
+        stmt = stmt.where(
+            or_(
+                ParkingLog.plate_id.is_(None),
+                ParkingLog.plate_id.in_(select(Plate.id).where(Plate.deleted_at.is_(None))),
+            )
+        )
         stmt = stmt.where(
             or_(
                 ParkingLog.vehicle_id.is_(None),

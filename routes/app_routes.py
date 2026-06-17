@@ -12,17 +12,20 @@ from database.logs_db import (
     count_software_logs,
     list_parking_logs,
     list_software_logs,
+    log_parking_event,
     log_software_event,
     soft_delete_parking_log,
+    update_parking_log_plate,
 )
 from database.vehicles_db import (
     count_vehicles,
-    find_vehicle_by_normalized,
     get_vehicles_by_ids,
-    insert_vehicle,
     list_vehicles,
     soft_delete_vehicle,
 )
+from database.enrollment_db import enroll_vehicle, resolve_plate_lookup
+from database.plate_assignments_db import set_primary_vehicle_for_plate
+from database.plates_db import get_plate_by_id, get_plate_detail_by_normalized
 from helpers.enroll_images import save_reference_image
 from database.cameras_db import (
     VALID_DIRECTIONS,
@@ -51,6 +54,7 @@ from database.admin_db import (
 from helpers.rbac import get_current_admin, require_admin_roles
 from helpers.plate_normalize import normalize_plate
 from helpers.parking_logging import parking_log_details_meta
+from helpers.uuid_utils import parse_uuid
 from helpers.live_frame_buffer import get_frame_sequence, get_stream_status, wait_for_new_jpeg
 from helpers.utils import UPLOAD_FOLDER, COLLECTION_FOLDER
 from workers.camera_worker import get_worker_status, reload_cameras
@@ -173,14 +177,17 @@ def cameras_create_api():
     return jsonify({"status": "ok", "camera": row}), 201
 
 
-@app_bp.patch("/api/cameras/<int:camera_id>")
+@app_bp.patch("/api/cameras/<camera_id>")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
-def cameras_update_api(camera_id: int):
+def cameras_update_api(camera_id: str):
+    cid = parse_uuid(camera_id)
+    if cid is None:
+        return jsonify({"status": "error", "message": "Invalid camera id"}), 400
     data = request.get_json() or {}
     if not data:
         return jsonify({"status": "error", "message": "No fields to update"}), 400
-    existing = get_camera_by_id(camera_id)
+    existing = get_camera_by_id(cid)
     if not existing:
         return jsonify({"status": "error", "message": "Camera not found"}), 404
     protocol = str(data.get("protocol", existing["protocol"])).strip().lower()
@@ -188,9 +195,9 @@ def cameras_update_api(camera_id: int):
     if "protocol" in data or "source" in data:
         if parse_camera_source(protocol, source) is None:
             return jsonify({"status": "error", "message": "Invalid camera data"}), 400
-        if source_in_use(protocol, source, exclude_id=camera_id):
+        if source_in_use(protocol, source, exclude_id=cid):
             return jsonify({"status": "error", "message": "A camera with this source already exists"}), 409
-    ok = update_camera(camera_id, **data)
+    ok = update_camera(cid, **data)
     if not ok:
         return jsonify({"status": "error", "message": "Camera not found or invalid data"}), 404
     reload_cameras()
@@ -198,23 +205,26 @@ def cameras_update_api(camera_id: int):
         level="INFO",
         event="camera.updated",
         module="app_routes",
-        message=f"Camera updated id={camera_id}",
+        message=f"Camera updated id={cid}",
     )
-    return jsonify({"status": "ok", "camera": get_camera_by_id(camera_id)})
+    return jsonify({"status": "ok", "camera": get_camera_by_id(cid)})
 
 
-@app_bp.delete("/api/cameras/<int:camera_id>")
+@app_bp.delete("/api/cameras/<camera_id>")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
-def cameras_delete_api(camera_id: int):
-    if not delete_camera(camera_id):
+def cameras_delete_api(camera_id: str):
+    cid = parse_uuid(camera_id)
+    if cid is None:
+        return jsonify({"status": "error", "message": "Invalid camera id"}), 400
+    if not delete_camera(cid):
         return jsonify({"status": "error", "message": "Camera not found"}), 404
     reload_cameras()
     log_software_event(
         level="INFO",
         event="camera.deleted",
         module="app_routes",
-        message=f"Camera deleted id={camera_id}",
+        message=f"Camera deleted id={cid}",
     )
     return jsonify({"status": "ok"})
 
@@ -315,14 +325,17 @@ def admins_create_api():
     return jsonify({"status": "ok", "admin": row}), 201
 
 
-@app_bp.patch("/api/admins/<int:admin_id>")
+@app_bp.patch("/api/admins/<admin_id>")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN)
-def admins_update_api(admin_id: int):
+def admins_update_api(admin_id: str):
+    aid = parse_uuid(admin_id)
+    if aid is None:
+        return jsonify({"status": "error", "message": "Invalid admin id"}), 400
     data = request.get_json() or {}
     if not data:
         return jsonify({"status": "error", "message": "No fields to update"}), 400
-    existing = get_admin_by_id(admin_id)
+    existing = get_admin_by_id(aid)
     if not existing:
         return jsonify({"status": "error", "message": "Admin not found"}), 404
     role = data.get("role")
@@ -333,9 +346,9 @@ def admins_update_api(admin_id: int):
         password = str(password)
         if not password:
             return jsonify({"status": "error", "message": "password cannot be empty"}), 400
-    if not update_admin(admin_id, role=role, password_plain=password):
+    if not update_admin(aid, role=role, password_plain=password):
         return jsonify({"status": "error", "message": "Invalid update"}), 400
-    row = get_admin_by_id(admin_id)
+    row = get_admin_by_id(aid)
     if row:
         row.pop("password_hash", None)
         row.pop("refresh_jti", None)
@@ -343,32 +356,35 @@ def admins_update_api(admin_id: int):
         level="INFO",
         event="admin.updated",
         module="app_routes",
-        message=f"Admin account updated id={admin_id}",
+        message=f"Admin account updated id={aid}",
     )
     return jsonify({"status": "ok", "admin": row})
 
 
-@app_bp.delete("/api/admins/<int:admin_id>")
+@app_bp.delete("/api/admins/<admin_id>")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN)
-def admins_delete_api(admin_id: int):
+def admins_delete_api(admin_id: str):
+    aid = parse_uuid(admin_id)
+    if aid is None:
+        return jsonify({"status": "error", "message": "Invalid admin id"}), 400
     current = get_current_admin()
-    if current and int(current["id"]) == admin_id:
+    if current and str(current["id"]) == str(aid):
         return jsonify({"status": "error", "message": "Cannot delete your own account"}), 400
-    existing = get_admin_by_id(admin_id)
+    existing = get_admin_by_id(aid)
     if not existing:
         return jsonify({"status": "error", "message": "Admin not found"}), 404
     if existing.get("role") == ROLE_SYSTEM_ADMIN:
-        others = [a for a in list_admins() if a.get("role") == ROLE_SYSTEM_ADMIN and a["id"] != admin_id]
+        others = [a for a in list_admins() if a.get("role") == ROLE_SYSTEM_ADMIN and a["id"] != str(aid)]
         if not others:
             return jsonify({"status": "error", "message": "Cannot delete the last system_admin"}), 400
-    if not delete_admin_by_id(admin_id):
+    if not delete_admin_by_id(aid):
         return jsonify({"status": "error", "message": "Admin not found"}), 404
     log_software_event(
         level="WARN",
         event="admin.deleted",
         module="app_routes",
-        message=f"Admin account deleted id={admin_id}",
+        message=f"Admin account deleted id={aid}",
         metadata=f"username={existing.get('username')!r}",
     )
     return jsonify({"status": "ok"})
@@ -433,7 +449,7 @@ def parking_logs_api():
         include_deleted_vehicles=include_deleted,
         **active,
     )
-    vehicle_ids = [int(r["vehicle_id"]) for r in logs if r.get("vehicle_id") is not None]
+    vehicle_ids = [r["vehicle_id"] for r in logs if r.get("vehicle_id") is not None]
     vehicles_map = get_vehicles_by_ids(vehicle_ids)
 
     for row in logs:
@@ -446,7 +462,7 @@ def parking_logs_api():
             f"/api/parking-snapshot?path={quote(str(source_path))}" if source_path else None
         )
         vid = row.get("vehicle_id")
-        v = vehicles_map.get(int(vid)) if vid is not None else None
+        v = vehicles_map.get(str(vid)) if vid is not None else None
         row["owner_name"] = v.get("owner_name") if v else None
         row["owner_lastname"] = v.get("owner_lastname") if v else None
         row["car_model"] = v.get("car_model") if v else None
@@ -465,19 +481,102 @@ def parking_logs_api():
     )
 
 
-@app_bp.delete("/api/parking-logs/<int:log_id>")
+@app_bp.delete("/api/parking-logs/<log_id>")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
-def parking_log_soft_delete_api(log_id: int):
-    if not soft_delete_parking_log(log_id):
+def parking_log_soft_delete_api(log_id: str):
+    lid = parse_uuid(log_id)
+    if lid is None:
+        return jsonify({"status": "error", "message": "Invalid parking log id"}), 400
+    if not soft_delete_parking_log(lid):
         return jsonify({"status": "error", "message": "Parking log not found"}), 404
     log_software_event(
         level="INFO",
         event="parking_log.soft_deleted",
         module="app_routes",
-        message=f"Parking log soft-deleted id={log_id}",
+        message=f"Parking log soft-deleted id={lid}",
     )
     return jsonify({"status": "ok"})
+
+
+@app_bp.post("/api/parking-logs")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def parking_log_create_api():
+    data = request.get_json() or {}
+    plate = str(data.get("plate_number") or "").strip()
+    direction = str(data.get("direction") or "").strip().lower()
+    note = str(data.get("note") or "").strip() or None
+    if not plate:
+        return jsonify({"status": "error", "message": "plate_number required"}), 400
+    if direction not in ("entry", "exit"):
+        return jsonify({"status": "error", "message": "direction must be entry or exit"}), 400
+    norm = normalize_plate(plate)
+    if not norm:
+        return jsonify({"status": "error", "message": "Invalid plate number"}), 400
+    resolved = resolve_plate_lookup(norm)
+    if resolved:
+        match_status = "registered"
+        plate_id = resolved.get("plate_id")
+        vehicle_id = resolved.get("vehicle_id")
+        is_guest = bool(resolved.get("is_guest"))
+    else:
+        match_status = "unregistered"
+        plate_id = None
+        vehicle_id = None
+        is_guest = False
+    details = f"manual_entry: {note}" if note else "manual_entry"
+    log_id = log_parking_event(
+        plate_normalized=norm,
+        plate_number=plate,
+        direction=direction,
+        match_status=match_status,
+        plate_id=plate_id,
+        vehicle_id=vehicle_id,
+        is_guest=is_guest,
+        details=details,
+    )
+    if log_id is None:
+        return jsonify({"status": "error", "message": "Failed to create log entry"}), 500
+    log_software_event(
+        level="INFO",
+        event="parking_log.manual_entry",
+        module="app_routes",
+        message=f"Manual parking log created id={log_id} plate={norm!r} direction={direction}",
+        metadata=f"match_status={match_status}" + (f" note={note!r}" if note else ""),
+    )
+    return jsonify({"status": "ok", "log_id": str(log_id)}), 201
+
+
+@app_bp.patch("/api/parking-logs/<log_id>/plate")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def parking_log_update_plate_api(log_id: str):
+    lid = parse_uuid(log_id)
+    if lid is None:
+        return jsonify({"status": "error", "message": "Invalid parking log id"}), 400
+    data = request.get_json() or {}
+    new_plate = str(data.get("new_plate") or "").strip()
+    if not new_plate:
+        return jsonify({"status": "error", "message": "new_plate required"}), 400
+    result = update_parking_log_plate(lid, new_plate)
+    if result is None:
+        return jsonify({"status": "error", "message": "Parking log not found or invalid plate"}), 404
+    log_software_event(
+        level="INFO",
+        event="parking_log.plate_corrected",
+        module="app_routes",
+        message=(
+            f"Plate corrected on log id={lid}: "
+            f"{result['old_plate_normalized']!r} -> {result['new_plate_normalized']!r}"
+        ),
+        metadata=(
+            f"old={result['old_plate_number']!r} "
+            f"new={result['new_plate_number']!r} "
+            f"vehicle_found={result['vehicle_found']}"
+        ),
+    )
+    return jsonify({"status": "ok", **result})
 
 
 @app_bp.get("/api/parking-snapshot")
@@ -522,6 +621,46 @@ def vehicles_api():
             "vehicles": vehicles,
         }
     )
+
+
+@app_bp.get("/api/plates/detail")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def plates_detail_api():
+    plate_raw = str(request.args.get("plate") or "").strip()
+    if not plate_raw:
+        return jsonify({"status": "error", "message": "plate query parameter required"}), 400
+    detail = get_plate_detail_by_normalized(plate_raw)
+    if not detail:
+        return jsonify({"status": "error", "message": "Plate not found"}), 404
+    return jsonify({"status": "ok", **detail})
+
+
+@app_bp.patch("/api/plates/<plate_id>/primary")
+@jwt_required()
+@require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN)
+def plates_set_primary_api(plate_id: str):
+    pid = parse_uuid(plate_id)
+    if pid is None:
+        return jsonify({"status": "error", "message": "Invalid plate id"}), 400
+    plate = get_plate_by_id(pid)
+    if not plate:
+        return jsonify({"status": "error", "message": "Plate not found"}), 404
+    data = request.get_json() or {}
+    vehicle_id = data.get("vehicle_id")
+    if not vehicle_id:
+        return jsonify({"status": "error", "message": "vehicle_id required"}), 400
+    if not set_primary_vehicle_for_plate(pid, vehicle_id):
+        return jsonify({"status": "error", "message": "Vehicle is not linked to this plate"}), 404
+    detail = get_plate_detail_by_normalized(plate["plate_normalized"])
+    log_software_event(
+        level="INFO",
+        event="plate.primary_changed",
+        module="app_routes",
+        message=f"Primary vehicle set for plate {plate['plate_normalized']!r}",
+        metadata=f"plate_id={pid} vehicle_id={vehicle_id}",
+    )
+    return jsonify({"status": "ok", **(detail or {})})
 
 
 def _parse_enroll_payload():
@@ -575,40 +714,31 @@ def _parse_enroll_payload():
 @app_bp.post("/api/enroll")
 @jwt_required()
 @require_admin_roles(ROLE_SYSTEM_ADMIN, ROLE_PARKING_ADMIN, ROLE_WORKER)
-def enroll_vehicle():
+def enroll_vehicle_api():
     payload, norm, err = _parse_enroll_payload()
     if err:
         return err
-    existing = find_vehicle_by_normalized(norm)
-    if existing:
-        return jsonify(
-            {
-                "status": "ok",
-                "duplicate": True,
-                "vehicle_id": existing["id"],
-                "plate_number_normalized": norm,
-            }
-        )
     ref_path = None
     ref_file = payload.pop("reference_file", None)
     if ref_file:
         ref_path = save_reference_image(norm, ref_file)
-    created = insert_vehicle(reference_image_path=ref_path, **payload)
+    created = enroll_vehicle(reference_image_path=ref_path, **payload)
     if not created:
         return jsonify({"status": "error", "message": "Could not enroll vehicle"}), 400
-    vid, normalized = created
+    vid, pid, normalized = created
     log_software_event(
         level="INFO",
         event="vehicle.enrolled",
         module="app_routes",
-        message=f"Vehicle enrolled id={vid}",
+        message=f"Vehicle enrolled id={vid} plate_id={pid}",
         metadata=f"plate={normalized!r} guest={payload['is_guest']}",
     )
     return jsonify(
         {
             "status": "ok",
             "duplicate": False,
-            "vehicle_id": vid,
+            "vehicle_id": str(vid),
+            "plate_id": str(pid),
             "plate_number_normalized": normalized,
             "reference_image_path": ref_path,
         }

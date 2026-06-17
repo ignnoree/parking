@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from database.types import uuid_fk, uuid_pk
 
 
 class Base(DeclarativeBase):
@@ -16,31 +19,52 @@ class Base(DeclarativeBase):
 class Admin(Base):
     __tablename__ = "admins"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     username: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     refresh_jti: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(32), server_default="worker", default="worker")
 
 
+class Plate(Base):
+    __tablename__ = "plates"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    plate_number: Mapped[str] = mapped_column(String(32))
+    plate_normalized: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    plate_color: Mapped[str] = mapped_column(String(32), server_default="default", default="default")
+    is_guest: Mapped[bool] = mapped_column(Boolean, default=False)
+    guest_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Vehicle(Base):
     __tablename__ = "vehicles"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    plate_number: Mapped[str] = mapped_column(String(32))
-    plate_normalized: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     owner_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     owner_lastname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     car_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     door_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     floor_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parking_spot: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    plate_color: Mapped[str] = mapped_column(String(32), server_default="default", default="default")
     vehicle_class: Mapped[str] = mapped_column(String(32), server_default="car", default="car")
-    is_guest: Mapped[bool] = mapped_column(Boolean, default=False)
-    guest_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reference_image_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlateAssignment(Base):
+    __tablename__ = "plate_assignments"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    plate_id: Mapped[uuid.UUID] = uuid_fk("plates.id", nullable=False, index=True, ondelete="CASCADE")
+    vehicle_id: Mapped[uuid.UUID] = uuid_fk("vehicles.id", nullable=False, index=True, ondelete="CASCADE")
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -48,10 +72,9 @@ class Vehicle(Base):
 class ParkingLog(Base):
     __tablename__ = "parking_logs"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    vehicle_id: Mapped[int | None] = mapped_column(
-        ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True
-    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    plate_id: Mapped[uuid.UUID | None] = uuid_fk("plates.id", nullable=True, index=True)
+    vehicle_id: Mapped[uuid.UUID | None] = uuid_fk("vehicles.id", nullable=True)
     plate_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     plate_normalized: Mapped[str] = mapped_column(String(32), index=True)
     direction: Mapped[str] = mapped_column(String(16))
@@ -68,19 +91,21 @@ class ParkingLog(Base):
 class SoftwareLog(Base):
     __tablename__ = "software_logs"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     level: Mapped[str] = mapped_column(String(20))
     event: Mapped[str | None] = mapped_column(String(255), nullable=True)
     module: Mapped[str | None] = mapped_column(String(255), nullable=True)
     message: Mapped[str] = mapped_column(Text)
     metadata_: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+    admin_id: Mapped[uuid.UUID | None] = uuid_fk("admins.id", nullable=True, index=True)
+    admin_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     logged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-#add which user 
+
 
 class Camera(Base):
     __tablename__ = "cameras"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(String(128))
     protocol: Mapped[str] = mapped_column(String(16))
     source: Mapped[str] = mapped_column(String(512))
@@ -91,6 +116,7 @@ class Camera(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
 
 class Setting(Base):
     __tablename__ = "settings"

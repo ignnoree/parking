@@ -1,8 +1,10 @@
 from werkzeug.security import generate_password_hash
 from sqlalchemy import func, select
+from uuid import UUID
 
 from database.db import session_scope, instance_to_dict
 from database.models import Admin
+from helpers.uuid_utils import parse_uuid
 
 ROLE_SYSTEM_ADMIN = "system_admin"
 ROLE_PARKING_ADMIN = "parking_admin"
@@ -29,15 +31,21 @@ def get_admin_by_username(username: str) -> dict | None:
         return instance_to_dict(admin) if admin else None
 
 
-def get_admin_by_id(admin_id: int) -> dict | None:
+def get_admin_by_id(admin_id: UUID | str) -> dict | None:
+    uid = parse_uuid(admin_id)
+    if uid is None:
+        return None
     with session_scope() as session:
-        admin = session.get(Admin, admin_id)
+        admin = session.get(Admin, uid)
         return instance_to_dict(admin) if admin else None
 
 
-def update_admin_refresh_jti(admin_id: int, jti: str | None) -> None:
+def update_admin_refresh_jti(admin_id: UUID | str, jti: str | None) -> None:
+    uid = parse_uuid(admin_id)
+    if uid is None:
+        return
     with session_scope() as session:
-        admin = session.get(Admin, admin_id)
+        admin = session.get(Admin, uid)
         if admin:
             admin.refresh_jti = jti
 
@@ -57,7 +65,7 @@ def list_admins(*, roles: list[str] | None = None) -> list[dict]:
         return out
 
 
-def insert_admin(username: str, password_plain: str, role: str) -> int | None:
+def insert_admin(username: str, password_plain: str, role: str) -> UUID | None:
     if role not in VALID_ROLES:
         return None
     with session_scope() as session:
@@ -74,15 +82,18 @@ def insert_admin(username: str, password_plain: str, role: str) -> int | None:
 
 
 def update_admin(
-    admin_id: int,
+    admin_id: UUID | str,
     *,
     role: str | None = None,
     password_plain: str | None = None,
 ) -> bool:
     if role is not None and role not in VALID_ROLES:
         return False
+    uid = parse_uuid(admin_id)
+    if uid is None:
+        return False
     with session_scope() as session:
-        admin = session.get(Admin, admin_id)
+        admin = session.get(Admin, uid)
         if admin is None:
             return False
         if role is not None:
@@ -92,9 +103,12 @@ def update_admin(
         return True
 
 
-def delete_admin_by_id(admin_id: int) -> bool:
+def delete_admin_by_id(admin_id: UUID | str) -> bool:
+    uid = parse_uuid(admin_id)
+    if uid is None:
+        return False
     with session_scope() as session:
-        admin = session.get(Admin, admin_id)
+        admin = session.get(Admin, uid)
         if admin is None:
             return False
         session.delete(admin)

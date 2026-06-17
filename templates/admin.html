@@ -3,355 +3,844 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Admin | Parking ANPR</title>
+    <title>Admin — ParkGuard</title>
     <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --text-subtle: #6e7681;
+            --accent: #4493f8;
+            --accent-hover: #58a6ff;
+            --accent-dim: rgba(68,147,248,.12);
+            --green: #3fb950;
+            --green-dim: rgba(63,185,80,.12);
+            --yellow: #e3b341;
+            --yellow-dim: rgba(227,179,65,.12);
+            --red: #f85149;
+            --red-dim: rgba(248,81,73,.12);
+            --indigo: #818cf8;
+            --indigo-dim: rgba(129,140,248,.12);
+            --r: 6px;
+            --r-lg: 10px;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f7fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            color: #1a2634;
+            font-size: 14px;
+            line-height: 1.5;
         }
+
+        /* ─── TOPBAR ─── */
         .topbar {
-            background: #1a2634;
-            color: #fff;
-            padding: 1rem 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            flex-wrap: wrap;
-            gap: 0.75rem;
+            padding: 0 1.5rem;
+            height: 54px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            gap: 1rem;
         }
-        .topbar h1 { font-size: 1.2rem; }
-        .topbar nav a { color: #93c5fd; text-decoration: none; margin-left: 1rem; font-size: 0.9rem; }
-        main { max-width: 1200px; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.5rem; }
-        section {
-            background: #fff;
-            border-radius: 0.75rem;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.04);
-            padding: 1.25rem 1.5rem;
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+            color: var(--text);
+            font-weight: 700;
+            font-size: 0.975rem;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
-        h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
-        .muted { color: #6b7a88; font-size: 0.88rem; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid #eef2f6; vertical-align: top; }
-        th { font-size: 0.75rem; text-transform: uppercase; color: #6b7a88; }
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-        .filter-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 0.65rem;
-            margin: 0.75rem 0 1rem;
-            align-items: end;
-        }
-        label { display: grid; gap: 0.3rem; font-size: 0.75rem; font-weight: 600; color: #4a5a68; text-transform: uppercase; }
-        input, select {
-            padding: 0.55rem 0.65rem;
-            border: 1px solid #dde3e9;
-            border-radius: 0.45rem;
-            font-size: 0.9rem;
-            font-family: inherit;
-        }
-        .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; align-items: center; }
-        button, .btn {
-            border: none;
-            border-radius: 0.5rem;
-            background: #1a2634;
+
+        .brand-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 800;
             color: #fff;
-            font-weight: 600;
-            padding: 0.6rem 0.9rem;
-            cursor: pointer;
-            font-size: 0.85rem;
         }
-        button.secondary { background: #e8edf2; color: #1a2634; }
-        button.danger { background: #b91c1c; }
-        button.small { padding: 0.35rem 0.6rem; font-size: 0.78rem; }
-        button:disabled { opacity: 0.55; cursor: not-allowed; }
-        .message { display: none; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.88rem; }
-        .message.show { display: block; }
-        .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-        .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
-        .badge, .pill {
-            display: inline-block;
-            padding: 0.15rem 0.45rem;
-            border-radius: 999px;
-            font-size: 0.72rem;
-            font-weight: 600;
+
+        .topbar-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.1rem;
+            flex: 1;
         }
-        .badge-on { background: #dcfce7; color: #166534; }
-        .badge-off { background: #f3f4f6; color: #6b7280; }
-        .pill-entry { background: #dbeafe; color: #1e40af; }
-        .pill-exit { background: #ffedd5; color: #9a3412; }
-        .pill-registered { background: #dcfce7; color: #166534; }
-        .pill-guest { background: #fef9c3; color: #854d0e; }
-        .pill-unregistered { background: #fee2e2; color: #991b1b; }
-        .pill-uncertain { background: #fef3c7; color: #92400e; }
-        .level-info { background: #e0f2fe; color: #0369a1; }
-        .level-warn { background: #fef3c7; color: #92400e; }
-        .level-error { background: #fee2e2; color: #991b1b; }
-        .level-debug { background: #f3f4f6; color: #4b5563; }
-        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
+
+        .nav-link {
+            padding: 0.35rem 0.7rem;
+            border-radius: var(--r);
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.825rem;
+            font-weight: 500;
+            transition: background .12s, color .12s;
+        }
+
+        .nav-link:hover { background: var(--surface-2); color: var(--text); }
+        .nav-link.active { background: var(--accent-dim); color: var(--accent); }
+
+        /* ─── LAYOUT ─── */
+        .main {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 1.5rem;
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        .page-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .page-title { font-size: 1.25rem; font-weight: 600; }
+        .page-subtitle { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem; }
+
+        /* ─── CARD ─── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
+            overflow: hidden;
+        }
+
+        /* ─── TABS ─── */
         .tabs {
             display: flex;
-            gap: 0.35rem;
-            flex-wrap: wrap;
-            margin-bottom: 1.25rem;
-            border-bottom: 1px solid #eef2f6;
-            padding-bottom: 0.75rem;
+            align-items: center;
+            gap: 0.15rem;
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
+            overflow-x: auto;
+            scrollbar-width: none;
         }
+
+        .tabs::-webkit-scrollbar { display: none; }
+
         .tab-btn {
-            background: #e8edf2;
-            color: #1a2634;
+            display: inline-flex;
+            align-items: center;
+            padding: 0.35rem 0.75rem;
+            border-radius: var(--r);
+            border: none;
+            font-family: inherit;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            color: var(--text-muted);
+            background: transparent;
+            transition: background .12s, color .12s;
+            white-space: nowrap;
         }
-        .tab-btn.active { background: #1a2634; color: #fff; }
+
+        .tab-btn:hover { background: var(--border); color: var(--text); }
+        .tab-btn.active { background: var(--accent-dim); color: var(--accent); }
+
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
-        .log-message { max-width: 320px; word-break: break-word; }
-        .toolbar-meta { color: #6b7a88; font-size: 0.85rem; margin-left: auto; }
+
+        /* ─── PANEL SECTION ─── */
+        .panel-section {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .panel-section:last-child { border-bottom: none; }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .section-title { font-size: 0.9rem; font-weight: 600; }
+        .section-hint { font-size: 0.8rem; color: var(--text-muted); }
+
+        /* ─── BUTTONS ─── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.45rem 0.85rem;
+            border-radius: var(--r);
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text);
+            transition: background .12s, border-color .12s;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+
+        .btn:hover { background: var(--border); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+        .btn-danger { background: var(--red-dim); border-color: rgba(248,81,73,.3); color: var(--red); }
+        .btn-danger:hover { background: rgba(248,81,73,.2); }
+
+        .btn-ghost { background: transparent; border-color: transparent; }
+        .btn-ghost:hover { background: var(--surface-2); border-color: var(--border); }
+
+        .btn-sm { padding: 0.28rem 0.6rem; font-size: 0.72rem; }
+
+        .btn-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+        }
+
+        /* ─── FORMS ─── */
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 0.65rem;
+            align-items: end;
+        }
+
+        .field { display: grid; gap: 0.35rem; }
+
+        label {
+            font-size: 0.68rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        input, select, textarea {
+            padding: 0.55rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.85rem;
+            font-family: inherit;
+            transition: border-color .12s, box-shadow .12s;
+            width: 100%;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim);
+        }
+
+        input::placeholder { color: var(--text-subtle); }
+        select option { background: var(--surface-2); }
+
         .check-inline {
             display: flex;
             align-items: center;
             gap: 0.4rem;
-            font-size: 0.82rem;
-            text-transform: none;
+            font-size: 0.8rem;
             font-weight: 500;
-            color: #4a5a68;
-            padding-bottom: 0.55rem;
+            color: var(--text-muted);
+            text-transform: none;
+            letter-spacing: 0;
         }
-        .check-inline input { width: auto; margin: 0; }
-        #loginGate { text-align: center; padding: 3rem 1rem; }
-        .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid #dde3e9; }
+
+        .check-inline input { width: auto; }
+
+        /* ─── TABLES ─── */
+        .table-wrap { overflow-x: auto; }
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th {
+            padding: 0.6rem 1rem;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            font-size: 0.66rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+            font-size: 0.84rem;
+        }
+
+        tr:last-child td { border-bottom: none; }
+        tbody tr { transition: background .1s; }
+        tbody tr:hover { background: rgba(255,255,255,.02); }
+
+        /* ─── PILLS & BADGES ─── */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.18rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.67rem;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+        }
+
+        .pill-entry        { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(68,147,248,.25); }
+        .pill-exit         { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(227,179,65,.25); }
+        .pill-registered   { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(63,185,80,.25); }
+        .pill-guest        { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(227,179,65,.25); }
+        .pill-unregistered { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(248,81,73,.25); }
+        .pill-uncertain    { background: var(--indigo-dim); color: var(--indigo); border: 1px solid rgba(129,140,248,.25); }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.18rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.67rem;
+            font-weight: 600;
+        }
+
+        .badge-on   { background: var(--green-dim); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+        .badge-off  { background: rgba(255,255,255,.05); color: var(--text-muted); border: 1px solid var(--border); }
+        .badge-live { background: var(--green-dim); color: var(--green); }
+        .badge-wait { background: var(--yellow-dim); color: var(--yellow); }
+
+        .level-info  { background: var(--accent-dim); color: var(--accent); }
+        .level-warn  { background: var(--yellow-dim); color: var(--yellow); }
+        .level-error { background: var(--red-dim);   color: var(--red); }
+        .level-debug { background: rgba(255,255,255,.05); color: var(--text-muted); }
+
+        /* ─── MISC ─── */
+        .mono { font-family: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, monospace; font-size: 0.78rem; }
+        .muted { color: var(--text-muted); text-align: center; padding: 2rem; font-size: 0.875rem; }
+        .muted a { color: var(--accent); text-decoration: none; }
+        .text-muted { color: var(--text-muted); font-size: 0.8rem; }
+
+        .thumb {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        .log-message { max-width: 300px; word-break: break-word; font-size: 0.8rem; }
+
+        .toolbar-meta { color: var(--text-muted); font-size: 0.8rem; }
+
+        .message {
+            padding: 0.65rem 1rem;
+            border-radius: var(--r);
+            font-size: 0.825rem;
+            display: none;
+        }
+
+        .message.show { display: block; }
+        .message.error   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(248,81,73,.25); }
+        .message.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+
+        /* ─── STATUS CARD ─── */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.65rem 1rem;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            flex-wrap: wrap;
+        }
+
+        /* ─── LOGIN GATE ─── */
+        #loginGate {
+            padding: 3rem 1.5rem;
+            text-align: center;
+        }
+
+        #loginGate p { color: var(--text-muted); font-size: 0.875rem; }
+        #loginGate a { color: var(--accent); text-decoration: none; }
+
+        /* ─── PAGINATION ─── */
+        .pagination {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
     <header class="topbar">
-        <h1>Admin panel</h1>
-        <nav>
-            <a href="/">Monitor</a>
-            <a href="/vehicles">Vehicles</a>
-            <a href="/submit">Register vehicle</a>
-            <a href="/login">Login</a>
+        <a href="/" class="brand">
+            <div class="brand-icon">P</div>
+            ParkGuard
+        </a>
+        <nav class="topbar-nav">
+            <a href="/" class="nav-link">Monitor</a>
+            <a href="/vehicles" class="nav-link">Vehicles</a>
+            <a href="/submit" class="nav-link">Register</a>
+            <a href="/admin" class="nav-link active">Admin</a>
+            <a href="/login" class="nav-link">Login</a>
         </nav>
     </header>
 
-    <main>
+    <main class="main">
+        <div class="page-header">
+            <div>
+                <div class="page-title">Admin panel</div>
+                <div class="page-subtitle">Manage cameras, vehicles, logs and system settings</div>
+            </div>
+        </div>
+
         <div id="message" class="message"></div>
 
-        <section id="loginGate">
-            <p class="muted">Sign in as <strong>parking_admin</strong> or <strong>system_admin</strong> to manage cameras and view logs.</p>
-            <p style="margin-top:1rem;"><a href="/login">Go to login</a></p>
-        </section>
+        <!-- Login gate -->
+        <div class="card" id="loginGate">
+            <p>Sign in as <strong>parking_admin</strong> or <strong>system_admin</strong> to access this panel.</p>
+            <p style="margin-top:0.75rem;"><a href="/login">→ Go to login</a></p>
+        </div>
 
-        <section id="adminMain" style="display:none;">
+        <!-- Main admin content -->
+        <div class="card" id="adminMain" style="display:none;">
             <div class="tabs">
                 <button type="button" class="tab-btn active" data-tab="cameras">Cameras</button>
                 <button type="button" class="tab-btn" data-tab="vehicles">Vehicles</button>
+                <button type="button" class="tab-btn" data-tab="plates">Plates</button>
                 <button type="button" class="tab-btn" data-tab="parkingLogs">Parking logs</button>
                 <button type="button" class="tab-btn" data-tab="softwareLogs">Software logs</button>
                 <button type="button" class="tab-btn" data-tab="settings">Settings</button>
                 <button type="button" class="tab-btn" data-tab="admins" id="adminsTabBtn" style="display:none;">Staff</button>
             </div>
 
+            <!-- ── CAMERAS ── -->
             <div id="tabCameras" class="tab-panel active">
-                <h2>Cameras</h2>
-                <p class="muted">Configure entry/exit cameras. Changes reload the camera worker automatically.</p>
-                <div id="workerStatus" class="muted" style="margin:0.5rem 0;"></div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Protocol</th>
-                            <th>Source</th>
-                            <th>Direction</th>
-                            <th>Light</th>
-                            <th>Status</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="camerasBody">
-                        <tr><td colspan="7" class="muted">Loading…</td></tr>
-                    </tbody>
-                </table>
+                <div class="status-bar" id="workerStatus">Loading worker status…</div>
 
-                <h2 style="margin-top:1.5rem;" id="formTitle">Add camera</h2>
-                <form id="cameraForm" class="form-grid">
-                    <input type="hidden" id="cameraId" value="">
-                    <label>Name<input id="name" required placeholder="Entry gate"></label>
-                    <label>Protocol
-                        <select id="protocol">
-                            <option value="rtsp">rtsp</option>
-                            <option value="http">http</option>
-                            <option value="usb">usb</option>
-                        </select>
-                    </label>
-                    <label>Source<input id="source" required placeholder="rtsp://… or 0 for USB"></label>
-                    <label>Direction
-                        <select id="direction">
-                            <option value="entry">entry</option>
-                            <option value="exit">exit</option>
-                        </select>
-                    </label>
-                    <label>Light profile
-                        <select id="light_profile">
-                            <option value="normal">normal</option>
-                            <option value="high_glare">high_glare</option>
-                            <option value="low_light">low_light</option>
-                        </select>
-                    </label>
-                    <label>Enabled
-                        <select id="is_enabled">
-                            <option value="true">Yes</option>
-                            <option value="false">No</option>
-                        </select>
-                    </label>
-                </form>
-                <div class="btn-row">
-                    <button type="button" id="saveBtn">Save camera</button>
-                    <button type="button" class="secondary" id="cancelEditBtn" style="display:none;">Cancel edit</button>
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Configured cameras</div>
+                            <div class="section-hint">Changes reload the camera worker automatically</div>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Protocol</th>
+                                    <th>Source</th>
+                                    <th>Direction</th>
+                                    <th>Light</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="camerasBody">
+                                <tr><td colspan="7" class="muted">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-title" id="formTitle">Add camera</div>
+                    </div>
+                    <form id="cameraForm" class="form-grid">
+                        <input type="hidden" id="cameraId" value="">
+                        <div class="field">
+                            <label>Name</label>
+                            <input id="name" required placeholder="Entry gate">
+                        </div>
+                        <div class="field">
+                            <label>Protocol</label>
+                            <select id="protocol">
+                                <option value="rtsp">rtsp</option>
+                                <option value="http">http</option>
+                                <option value="usb">usb</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Source</label>
+                            <input id="source" required placeholder="rtsp://… or 0 for USB">
+                        </div>
+                        <div class="field">
+                            <label>Direction</label>
+                            <select id="direction">
+                                <option value="entry">entry</option>
+                                <option value="exit">exit</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Light profile</label>
+                            <select id="light_profile">
+                                <option value="normal">normal</option>
+                                <option value="high_glare">high_glare</option>
+                                <option value="low_light">low_light</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Enabled</label>
+                            <select id="is_enabled">
+                                <option value="true">Yes</option>
+                                <option value="false">No</option>
+                            </select>
+                        </div>
+                    </form>
+                    <div class="btn-row">
+                        <button type="button" class="btn btn-primary" id="saveBtn">Save camera</button>
+                        <button type="button" class="btn" id="cancelEditBtn" style="display:none;">Cancel</button>
+                    </div>
                 </div>
             </div>
 
+            <!-- ── PARKING LOGS ── -->
             <div id="tabParkingLogs" class="tab-panel">
-                <h2>Parking logs</h2>
-                <p class="muted">Entry/exit history with filters. Logs for soft-deleted vehicles are hidden by default.</p>
-                <div class="filter-grid">
-                    <label>Direction
-                        <select id="parkingDirection">
-                            <option value="">All</option>
-                            <option value="entry">Entry</option>
-                            <option value="exit">Exit</option>
-                        </select>
-                    </label>
-                    <label>Match status
-                        <select id="parkingMatch">
-                            <option value="">All</option>
-                            <option value="registered">Registered</option>
-                            <option value="unregistered">Unregistered</option>
-                            <option value="uncertain">Uncertain</option>
-                        </select>
-                    </label>
-                    <label>Plate contains<input id="parkingPlate" placeholder="DXB1234"></label>
-                    <label>From<input id="parkingFrom" type="datetime-local"></label>
-                    <label>To<input id="parkingTo" type="datetime-local"></label>
-                    <label class="check-inline" id="includeDeletedWrap" style="display:none;">
-                        <input type="checkbox" id="includeDeleted"> Include soft-deleted vehicles
-                    </label>
-                    <button type="button" id="parkingFilterBtn">Apply filters</button>
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Parking logs</div>
+                            <div class="section-hint">Entry/exit history. Logs for soft-deleted vehicles are hidden by default.</div>
+                        </div>
+                    </div>
+                    <div class="filter-grid">
+                        <div class="field">
+                            <label>Direction</label>
+                            <select id="parkingDirection">
+                                <option value="">All</option>
+                                <option value="entry">Entry</option>
+                                <option value="exit">Exit</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Match status</label>
+                            <select id="parkingMatch">
+                                <option value="">All</option>
+                                <option value="registered">Registered</option>
+                                <option value="unregistered">Unregistered</option>
+                                <option value="uncertain">Uncertain</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Plate contains</label>
+                            <input id="parkingPlate" placeholder="DXB1234">
+                        </div>
+                        <div class="field">
+                            <label>From</label>
+                            <input id="parkingFrom" type="datetime-local">
+                        </div>
+                        <div class="field">
+                            <label>To</label>
+                            <input id="parkingTo" type="datetime-local">
+                        </div>
+                        <div class="field" id="includeDeletedWrap" style="display:none; align-self:end;">
+                            <label class="check-inline">
+                                <input type="checkbox" id="includeDeleted" style="width:auto;">
+                                Include soft-deleted
+                            </label>
+                        </div>
+                        <div class="field" style="align-self:end;">
+                            <button type="button" class="btn btn-primary" id="parkingFilterBtn" style="width:100%;">Apply filters</button>
+                        </div>
+                    </div>
                 </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Plate</th>
-                            <th>Direction</th>
-                            <th>Status</th>
-                            <th>Conf.</th>
-                            <th>Plate crop</th>
-                            <th>Full frame</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="parkingLogsBody">
-                        <tr><td colspan="8" class="muted">Loading…</td></tr>
-                    </tbody>
-                </table>
-                <div class="btn-row">
-                    <button type="button" class="secondary" id="parkingPrevBtn" disabled>Previous</button>
-                    <button type="button" class="secondary" id="parkingNextBtn" disabled>Next</button>
-                    <button type="button" class="secondary" id="parkingRefreshBtn">Refresh</button>
-                    <span class="toolbar-meta" id="parkingPageInfo">Page 1</span>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Plate</th>
+                                <th>Direction</th>
+                                <th>Status</th>
+                                <th>Conf.</th>
+                                <th>Plate crop</th>
+                                <th>Full frame</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="parkingLogsBody">
+                            <tr><td colspan="8" class="muted">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="panel-section">
+                    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                        <div class="pagination">
+                            <button type="button" class="btn btn-sm" id="parkingPrevBtn" disabled>← Prev</button>
+                            <button type="button" class="btn btn-sm" id="parkingNextBtn" disabled>Next →</button>
+                            <button type="button" class="btn btn-sm" id="parkingRefreshBtn">↻</button>
+                        </div>
+                        <span class="toolbar-meta" id="parkingPageInfo">Page 1</span>
+                    </div>
+
+                    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+                        <button type="button" class="btn btn-sm" id="toggleManualLogBtn">+ Add manual entry</button>
+                        <div id="manualLogForm" style="display:none;margin-top:0.75rem;">
+                            <div class="filter-grid">
+                                <div class="field">
+                                    <label>Plate</label>
+                                    <input id="manualPlate" placeholder="ABC1234">
+                                </div>
+                                <div class="field">
+                                    <label>Direction</label>
+                                    <select id="manualDirection">
+                                        <option value="entry">Entry</option>
+                                        <option value="exit">Exit</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label>Note (optional)</label>
+                                    <input id="manualNote" placeholder="Reason…">
+                                </div>
+                                <div class="field" style="align-self:end;">
+                                    <button type="button" class="btn btn-primary" id="submitManualLogBtn" style="width:100%;">Add log</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
+            <!-- ── VEHICLES ── -->
             <div id="tabVehicles" class="tab-panel">
-                <h2>Registered vehicles</h2>
-                <p class="muted">Search allowed plates. <a href="/vehicles">Open full vehicles page</a> for remove actions.</p>
-                <div class="filter-grid">
-                    <label>Plate<input id="adminVehiclePlate" placeholder="DXB"></label>
-                    <label>Owner<input id="adminVehicleOwner" placeholder="Name"></label>
-                    <button type="button" id="adminVehicleSearchBtn">Search</button>
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Registered vehicles</div>
+                            <div class="section-hint">Search allowed plates. <a href="/vehicles" style="color:var(--accent);text-decoration:none;">Open full vehicles page</a> for remove actions.</div>
+                        </div>
+                    </div>
+                    <div class="filter-grid">
+                        <div class="field">
+                            <label>Plate</label>
+                            <input id="adminVehiclePlate" placeholder="DXB">
+                        </div>
+                        <div class="field">
+                            <label>Owner</label>
+                            <input id="adminVehicleOwner" placeholder="Name">
+                        </div>
+                        <div class="field" style="align-self:end;">
+                            <button type="button" class="btn btn-primary" id="adminVehicleSearchBtn" style="width:100%;">Search</button>
+                        </div>
+                    </div>
                 </div>
-                <table>
-                    <thead><tr><th>Plate</th><th>Owner</th><th>Type</th><th>Car</th></tr></thead>
-                    <tbody id="adminVehiclesBody"><tr><td colspan="4" class="muted">Use search.</td></tr></tbody>
-                </table>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Plate</th><th>Owner</th><th>Type</th><th>Car</th></tr>
+                        </thead>
+                        <tbody id="adminVehiclesBody">
+                            <tr><td colspan="4" class="muted">Use search above.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
+            <!-- ── PLATES ── -->
+            <div id="tabPlates" class="tab-panel">
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Plate assignments</div>
+                            <div class="section-hint">Look up a plate to see all linked cars. The <strong>primary</strong> car is shown at the gate when that plate is scanned.</div>
+                        </div>
+                    </div>
+                    <div class="filter-grid">
+                        <div class="field">
+                            <label>Plate number</label>
+                            <input id="plateLookupInput" placeholder="e.g. A11111">
+                        </div>
+                        <div class="field" style="align-self:end;">
+                            <button type="button" class="btn btn-primary" id="plateLookupBtn" style="width:100%;">Look up</button>
+                        </div>
+                    </div>
+                    <div id="plateDetailWrap" style="display:none;margin-top:1rem;">
+                        <p id="plateDetailSummary" style="font-size:.8rem;color:var(--text-muted);margin-bottom:0.75rem;"></p>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Primary</th>
+                                    <th>Owner</th>
+                                    <th>Car model</th>
+                                    <th>Class</th>
+                                    <th>Parking spot</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="plateVehiclesBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SETTINGS ── -->
             <div id="tabSettings" class="tab-panel">
-                <h2>Runtime settings</h2>
-                <p class="muted">Stored in PostgreSQL. OCR confidence is hardcoded in code (0.45).</p>
-                <div id="settingsForm" class="form-grid"></div>
-                <div class="btn-row">
-                    <button type="button" id="settingsSaveBtn">Save settings</button>
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Runtime settings</div>
+                            <div class="section-hint">Stored in PostgreSQL. OCR confidence threshold is hardcoded in code (0.45).</div>
+                        </div>
+                    </div>
+                    <div id="settingsForm" class="form-grid"></div>
+                    <div class="btn-row">
+                        <button type="button" class="btn btn-primary" id="settingsSaveBtn">Save settings</button>
+                    </div>
                 </div>
             </div>
 
+            <!-- ── STAFF ── -->
             <div id="tabAdmins" class="tab-panel">
-                <h2>Staff accounts</h2>
-                <p class="muted">system_admin only.</p>
-                <table>
-                    <thead><tr><th>Username</th><th>Role</th><th></th></tr></thead>
-                    <tbody id="adminsBody"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
-                </table>
-                <h2 style="margin-top:1.5rem;">Add staff</h2>
-                <div class="form-grid">
-                    <label>Username<input id="newAdminUser"></label>
-                    <label>Password<input id="newAdminPass" type="password"></label>
-                    <label>Role
-                        <select id="newAdminRole">
-                            <option value="worker">worker</option>
-                            <option value="parking_admin">parking_admin</option>
-                            <option value="system_admin">system_admin</option>
-                        </select>
-                    </label>
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Staff accounts</div>
+                            <div class="section-hint">system_admin only</div>
+                        </div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr><th>Username</th><th>Role</th><th></th></tr>
+                        </thead>
+                        <tbody id="adminsBody">
+                            <tr><td colspan="3" class="muted">Loading…</td></tr>
+                        </tbody>
+                    </table>
                 </div>
-                <div class="btn-row"><button type="button" id="createAdminBtn">Create account</button></div>
+
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-title">Add staff account</div>
+                    </div>
+                    <div class="form-grid">
+                        <div class="field">
+                            <label>Username</label>
+                            <input id="newAdminUser">
+                        </div>
+                        <div class="field">
+                            <label>Password</label>
+                            <input id="newAdminPass" type="password">
+                        </div>
+                        <div class="field">
+                            <label>Role</label>
+                            <select id="newAdminRole">
+                                <option value="worker">worker</option>
+                                <option value="parking_admin">parking_admin</option>
+                                <option value="system_admin">system_admin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="btn-row">
+                        <button type="button" class="btn btn-primary" id="createAdminBtn">Create account</button>
+                    </div>
+                </div>
             </div>
 
+            <!-- ── SOFTWARE LOGS ── -->
             <div id="tabSoftwareLogs" class="tab-panel">
-                <h2>Software logs</h2>
-                <p class="muted">Technical audit trail — camera changes, errors, admin actions.</p>
-                <div class="filter-grid">
-                    <label>Level
-                        <select id="softwareLevel">
-                            <option value="">All</option>
-                            <option value="INFO">INFO</option>
-                            <option value="WARN">WARN</option>
-                            <option value="ERROR">ERROR</option>
-                            <option value="DEBUG">DEBUG</option>
-                        </select>
-                    </label>
-                    <label>Event contains<input id="softwareEvent" placeholder="camera.deleted"></label>
-                    <label>Module contains<input id="softwareModule" placeholder="app_routes"></label>
-                    <button type="button" id="softwareFilterBtn">Apply filters</button>
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Software logs</div>
+                            <div class="section-hint">Technical audit trail — camera changes, errors, admin actions</div>
+                        </div>
+                    </div>
+                    <div class="filter-grid">
+                        <div class="field">
+                            <label>Level</label>
+                            <select id="softwareLevel">
+                                <option value="">All</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARN">WARN</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="DEBUG">DEBUG</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Event contains</label>
+                            <input id="softwareEvent" placeholder="camera.deleted">
+                        </div>
+                        <div class="field">
+                            <label>Module contains</label>
+                            <input id="softwareModule" placeholder="app_routes">
+                        </div>
+                        <div class="field" style="align-self:end;">
+                            <button type="button" class="btn btn-primary" id="softwareFilterBtn" style="width:100%;">Apply filters</button>
+                        </div>
+                    </div>
                 </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Level</th>
-                            <th>Event</th>
-                            <th>Module</th>
-                            <th>Message</th>
-                        </tr>
-                    </thead>
-                    <tbody id="softwareLogsBody">
-                        <tr><td colspan="5" class="muted">Loading…</td></tr>
-                    </tbody>
-                </table>
-                <div class="btn-row">
-                    <button type="button" class="secondary" id="softwarePrevBtn" disabled>Previous</button>
-                    <button type="button" class="secondary" id="softwareNextBtn" disabled>Next</button>
-                    <button type="button" class="secondary" id="softwareRefreshBtn">Refresh</button>
-                    <span class="toolbar-meta" id="softwarePageInfo">Page 1</span>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Level</th>
+                                <th>Admin</th>
+                                <th>Event</th>
+                                <th>Module</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="softwareLogsBody">
+                            <tr><td colspan="6" class="muted">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="panel-section">
+                    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                        <div class="pagination">
+                            <button type="button" class="btn btn-sm" id="softwarePrevBtn" disabled>← Prev</button>
+                            <button type="button" class="btn btn-sm" id="softwareNextBtn" disabled>Next →</button>
+                            <button type="button" class="btn btn-sm" id="softwareRefreshBtn">↻</button>
+                        </div>
+                        <span class="toolbar-meta" id="softwarePageInfo">Page 1</span>
+                    </div>
                 </div>
             </div>
-        </section>
+        </div>
     </main>
 
     <script>
@@ -453,6 +942,7 @@
             if (tab === "parkingLogs") loadParkingLogs(parkingPage).catch((err) => showMessage(err.message, "error"));
             if (tab === "softwareLogs") loadSoftwareLogs(softwarePage).catch((err) => showMessage(err.message, "error"));
             if (tab === "vehicles") loadAdminVehicles().catch((err) => showMessage(err.message, "error"));
+            if (tab === "plates") { /* loaded on search */ }
             if (tab === "settings") loadSettings().catch((err) => showMessage(err.message, "error"));
             if (tab === "admins") loadAdmins().catch((err) => showMessage(err.message, "error"));
         }
@@ -478,13 +968,13 @@
                 <tr data-camera-id="${c.id}">
                     <td>${escapeHtml(c.name)}</td>
                     <td>${escapeHtml(c.protocol)}</td>
-                    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.source)}</td>
+                    <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" class="mono">${escapeHtml(c.source)}</td>
                     <td>${escapeHtml(c.direction)}</td>
                     <td>${escapeHtml(c.light_profile)}</td>
                     <td><span class="badge ${c.is_enabled ? "badge-on" : "badge-off"}">${c.is_enabled ? "On" : "Off"}</span></td>
                     <td>
-                        <button type="button" class="small secondary" data-edit="${c.id}">Edit</button>
-                        <button type="button" class="small danger" data-del="${c.id}">Delete</button>
+                        <button type="button" class="btn btn-sm" data-edit="${c.id}">Edit</button>
+                        <button type="button" class="btn btn-sm btn-danger" data-del="${c.id}">Delete</button>
                     </td>
                 </tr>
             `).join("");
@@ -548,6 +1038,69 @@
             )).join("");
         }
 
+        let currentPlateId = null;
+
+        function renderPlateDetail(data) {
+            const wrap = document.getElementById("plateDetailWrap");
+            const summary = document.getElementById("plateDetailSummary");
+            const body = document.getElementById("plateVehiclesBody");
+            const plate = data.plate || {};
+            const vehicles = data.vehicles || [];
+            currentPlateId = plate.id || null;
+            if (!currentPlateId) {
+                wrap.style.display = "none";
+                return;
+            }
+            wrap.style.display = "block";
+            const guest = plate.is_guest ? " · guest" : "";
+            summary.textContent =
+                "Plate " + (plate.plate_number || plate.plate_normalized) +
+                " (" + vehicles.length + " car" + (vehicles.length === 1 ? "" : "s") + " linked)" + guest;
+            if (!vehicles.length) {
+                body.innerHTML = '<tr><td colspan="6" class="muted">No active vehicles linked.</td></tr>';
+                return;
+            }
+            body.innerHTML = vehicles.map((v) => {
+                const owner = [v.owner_name, v.owner_lastname].filter(Boolean).join(" ") || "—";
+                const primaryCell = v.is_primary
+                    ? "<span class='badge badge-on'>Primary</span>"
+                    : "<button type='button' class='btn btn-sm' data-set-primary='" + escapeHtml(v.vehicle_id) + "'>Set primary</button>";
+                return "<tr>" +
+                    "<td>" + primaryCell + "</td>" +
+                    "<td>" + escapeHtml(owner) + "</td>" +
+                    "<td>" + escapeHtml(v.car_model || "—") + "</td>" +
+                    "<td>" + escapeHtml(v.vehicle_class || "—") + "</td>" +
+                    "<td>" + escapeHtml(v.parking_spot || "—") + "</td>" +
+                    "<td class='mono' style='color:var(--text-muted);font-size:.72rem;'>" + escapeHtml(String(v.vehicle_id || "").slice(0, 8)) + "…</td>" +
+                    "</tr>";
+            }).join("");
+            body.querySelectorAll("[data-set-primary]").forEach((btn) => {
+                btn.addEventListener("click", async () => {
+                    const vehicleId = btn.getAttribute("data-set-primary");
+                    try {
+                        const res = await apiFetch("/api/plates/" + currentPlateId + "/primary", {
+                            method: "PATCH",
+                            body: JSON.stringify({ vehicle_id: vehicleId }),
+                        });
+                        renderPlateDetail(res);
+                        showMessage("Primary vehicle updated.", "success");
+                    } catch (err) {
+                        showMessage(err.message, "error");
+                    }
+                });
+            });
+        }
+
+        async function loadPlateDetail() {
+            const plate = document.getElementById("plateLookupInput").value.trim();
+            if (!plate) {
+                showMessage("Enter a plate number.", "error");
+                return;
+            }
+            const data = await apiFetch("/api/plates/detail?plate=" + encodeURIComponent(plate));
+            renderPlateDetail(data);
+        }
+
         async function loadSettings() {
             const data = await apiFetch("/api/settings");
             const form = document.getElementById("settingsForm");
@@ -562,14 +1115,14 @@
                 const val = byKey[key];
                 const inner = val && val.value != null ? val.value : "";
                 if (key === "light_profile_global") {
-                    return "<label>" + escapeHtml(labels[key] || key) +
+                    return "<div class='field'><label>" + escapeHtml(labels[key] || key) + "</label>" +
                         "<select data-setting-key='" + key + "'>" +
                         ["normal","high_glare","low_light"].map((p) =>
                             "<option value='" + p + "'" + (String(inner) === p ? " selected" : "") + ">" + p + "</option>"
-                        ).join("") + "</select></label>";
+                        ).join("") + "</select></div>";
                 }
-                return "<label>" + escapeHtml(labels[key] || key) +
-                    "<input data-setting-key='" + key + "' value='" + escapeHtml(String(inner)) + "'></label>";
+                return "<div class='field'><label>" + escapeHtml(labels[key] || key) + "</label>" +
+                    "<input data-setting-key='" + key + "' value='" + escapeHtml(String(inner)) + "'></div>";
             }).join("");
         }
 
@@ -583,7 +1136,7 @@
             }
             body.innerHTML = rows.map((a) => (
                 "<tr><td>" + escapeHtml(a.username) + "</td><td>" + escapeHtml(a.role) + "</td>" +
-                "<td><button type='button' class='small danger' data-del-admin='" + a.id + "'>Delete</button></td></tr>"
+                "<td><button type='button' class='btn btn-sm btn-danger' data-del-admin='" + a.id + "'>Delete</button></td></tr>"
             )).join("");
         }
 
@@ -605,13 +1158,16 @@
             body.innerHTML = rows.map((r) => (
                 "<tr>" +
                 "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
-                "<td class='mono'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
+                "<td class='mono' data-plate-cell data-log-id='" + escapeHtml(r.id) + "' data-plate-value='" + escapeHtml(r.plate_number || r.plate_normalized || "") + "'>" + escapeHtml(r.plate_number || r.plate_normalized || "—") + "</td>" +
                 "<td>" + directionPill(r.direction) + "</td>" +
                 "<td>" + statusPill(r) + "</td>" +
-                "<td>" + (r.confidence != null ? Number(r.confidence).toFixed(2) : "—") + "</td>" +
+                "<td style='color:var(--text-muted);'>" + (r.confidence != null ? Number(r.confidence).toFixed(2) : "—") + "</td>" +
                 "<td>" + cropSnapshotCell(r) + "</td>" +
                 "<td>" + fullSnapshotCell(r) + "</td>" +
-                "<td><button type='button' class='small danger' data-del-log='" + r.id + "'>Hide</button></td>" +
+                "<td data-actions-cell>" +
+                    "<button type='button' class='btn btn-sm btn-danger' data-del-log='" + r.id + "'>Hide</button> " +
+                    "<button type='button' class='btn btn-sm' data-edit-log='" + r.id + "'>Edit</button>" +
+                "</td>" +
                 "</tr>"
             )).join("");
         }
@@ -634,7 +1190,7 @@
             softwarePage = page;
             const body = document.getElementById("softwareLogsBody");
             const pageInfo = document.getElementById("softwarePageInfo");
-            body.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
+            body.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
             const data = await apiFetch(softwareQuery(page));
             const rows = data.logs || [];
             document.getElementById("softwarePrevBtn").disabled = !data.has_prev;
@@ -642,17 +1198,20 @@
             pageInfo.textContent = `Page ${data.page || page} · ${data.total ?? 0} total`;
 
             if (!rows.length) {
-                body.innerHTML = '<tr><td colspan="5" class="muted">No software logs match filters.</td></tr>';
+                body.innerHTML = '<tr><td colspan="6" class="muted">No software logs match filters.</td></tr>';
                 return;
             }
             body.innerHTML = rows.map((r) => (
                 "<tr>" +
                 "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
                 "<td>" + levelBadge(r.level) + "</td>" +
+                "<td class='mono'>" + escapeHtml(r.admin_username || "—") +
+                    (r.admin_id ? "<br><span style='font-size:.7rem;color:var(--text-muted)'>" + escapeHtml(String(r.admin_id).slice(0, 8)) + "…</span>" : "") +
+                "</td>" +
                 "<td class='mono'>" + escapeHtml(r.event || "—") + "</td>" +
                 "<td class='mono'>" + escapeHtml(r.module || "—") + "</td>" +
                 "<td class='log-message'>" + escapeHtml(r.message || "—") +
-                    (r.metadata_ || r.metadata ? "<br><span class='muted'>" + escapeHtml(r.metadata_ || r.metadata) + "</span>" : "") +
+                    (r.metadata_ || r.metadata ? "<br><span style='color:var(--text-muted);font-size:.75rem;'>" + escapeHtml(r.metadata_ || r.metadata) + "</span>" : "") +
                 "</td>" +
                 "</tr>"
             )).join("");
@@ -666,13 +1225,13 @@
                 <tr data-camera-id="${camera.id}">
                     <td>${escapeHtml(camera.name)}</td>
                     <td>${escapeHtml(camera.protocol)}</td>
-                    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(camera.source)}</td>
+                    <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" class="mono">${escapeHtml(camera.source)}</td>
                     <td>${escapeHtml(camera.direction)}</td>
                     <td>${escapeHtml(camera.light_profile)}</td>
                     <td><span class="badge ${camera.is_enabled ? "badge-on" : "badge-off"}">${camera.is_enabled ? "On" : "Off"}</span></td>
                     <td>
-                        <button type="button" class="small secondary" data-edit="${camera.id}">Edit</button>
-                        <button type="button" class="small danger" data-del="${camera.id}">Delete</button>
+                        <button type="button" class="btn btn-sm" data-edit="${camera.id}">Edit</button>
+                        <button type="button" class="btn btn-sm btn-danger" data-del="${camera.id}">Delete</button>
                     </td>
                 </tr>
             `;
@@ -691,7 +1250,7 @@
             const row = camerasBody.querySelector(`tr[data-camera-id="${cameraId}"]`);
             if (row) row.remove();
             if (!camerasBody.querySelector("tr[data-camera-id]")) {
-                camerasBody.innerHTML = '<tr><td colspan="8" class="muted">No cameras configured.</td></tr>';
+                camerasBody.innerHTML = '<tr><td colspan="7" class="muted">No cameras configured.</td></tr>';
             }
         }
 
@@ -710,7 +1269,7 @@
                 document.getElementById("light_profile").value = cam.light_profile;
                 document.getElementById("is_enabled").value = cam.is_enabled ? "true" : "false";
                 formTitle.textContent = "Edit camera";
-                cancelEditBtn.style.display = "inline-block";
+                cancelEditBtn.style.display = "inline-flex";
                 switchTab("cameras");
                 return;
             }
@@ -759,13 +1318,53 @@
 
         document.getElementById("parkingLogsBody").addEventListener("click", async (e) => {
             const logId = e.target.getAttribute("data-del-log");
-            if (!logId || !confirm("Soft-delete this parking log row?")) return;
-            try {
-                await apiFetch("/api/parking-logs/" + logId, { method: "DELETE" });
-                showMessage("Log hidden.", "success");
+            if (logId) {
+                if (!confirm("Soft-delete this parking log row?")) return;
+                try {
+                    await apiFetch("/api/parking-logs/" + logId, { method: "DELETE" });
+                    showMessage("Log hidden.", "success");
+                    await loadParkingLogs(parkingPage);
+                } catch (err) {
+                    showMessage(err.message, "error");
+                }
+                return;
+            }
+
+            const editLogId = e.target.getAttribute("data-edit-log");
+            if (editLogId) {
+                const row = e.target.closest("tr");
+                const plateCell = row.querySelector("[data-plate-cell]");
+                const actionsCell = row.querySelector("[data-actions-cell]");
+                const currentPlate = plateCell.getAttribute("data-plate-value");
+                plateCell.innerHTML = "<input class='mono' style='width:110px;padding:0.25rem 0.4rem;' id='editPlateInput_" + escapeHtml(editLogId) + "' value='" + escapeHtml(currentPlate) + "'>";
+                actionsCell.innerHTML =
+                    "<button type='button' class='btn btn-sm btn-primary' data-save-log='" + editLogId + "'>Save</button> " +
+                    "<button type='button' class='btn btn-sm' data-cancel-log='" + editLogId + "'>Cancel</button>";
+                document.getElementById("editPlateInput_" + editLogId).focus();
+                return;
+            }
+
+            const saveLogId = e.target.getAttribute("data-save-log");
+            if (saveLogId) {
+                const input = document.getElementById("editPlateInput_" + saveLogId);
+                const newPlate = input ? input.value.trim() : "";
+                if (!newPlate) { showMessage("Plate cannot be empty.", "error"); return; }
+                try {
+                    await apiFetch("/api/parking-logs/" + saveLogId + "/plate", {
+                        method: "PATCH",
+                        body: JSON.stringify({ new_plate: newPlate }),
+                    });
+                    showMessage("Plate updated.", "success");
+                    await loadParkingLogs(parkingPage);
+                } catch (err) {
+                    showMessage(err.message, "error");
+                }
+                return;
+            }
+
+            const cancelLogId = e.target.getAttribute("data-cancel-log");
+            if (cancelLogId) {
                 await loadParkingLogs(parkingPage);
-            } catch (err) {
-                showMessage(err.message, "error");
             }
         });
 
@@ -780,6 +1379,36 @@
         });
         document.getElementById("parkingNextBtn").addEventListener("click", () => {
             loadParkingLogs(parkingPage + 1).catch((err) => showMessage(err.message, "error"));
+        });
+
+        document.getElementById("toggleManualLogBtn").addEventListener("click", () => {
+            const form = document.getElementById("manualLogForm");
+            const btn = document.getElementById("toggleManualLogBtn");
+            const open = form.style.display === "none";
+            form.style.display = open ? "block" : "none";
+            btn.textContent = open ? "Cancel" : "+ Add manual entry";
+        });
+
+        document.getElementById("submitManualLogBtn").addEventListener("click", async () => {
+            clearMessage();
+            const plate = document.getElementById("manualPlate").value.trim();
+            const direction = document.getElementById("manualDirection").value;
+            const note = document.getElementById("manualNote").value.trim();
+            if (!plate) { showMessage("Plate number is required.", "error"); return; }
+            try {
+                await apiFetch("/api/parking-logs", {
+                    method: "POST",
+                    body: JSON.stringify({ plate_number: plate, direction, note: note || null }),
+                });
+                showMessage("Manual log entry added.", "success");
+                document.getElementById("manualPlate").value = "";
+                document.getElementById("manualNote").value = "";
+                document.getElementById("manualLogForm").style.display = "none";
+                document.getElementById("toggleManualLogBtn").textContent = "+ Add manual entry";
+                await loadParkingLogs(1);
+            } catch (err) {
+                showMessage(err.message, "error");
+            }
         });
 
         document.getElementById("softwareFilterBtn").addEventListener("click", () => {
@@ -797,6 +1426,18 @@
 
         document.getElementById("adminVehicleSearchBtn").addEventListener("click", () => {
             loadAdminVehicles().catch((err) => showMessage(err.message, "error"));
+        });
+
+        document.getElementById("plateLookupBtn").addEventListener("click", () => {
+            clearMessage();
+            loadPlateDetail().catch((err) => showMessage(err.message, "error"));
+        });
+        document.getElementById("plateLookupInput").addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                clearMessage();
+                loadPlateDetail().catch((err) => showMessage(err.message, "error"));
+            }
         });
 
         document.getElementById("settingsSaveBtn").addEventListener("click", async () => {
@@ -856,8 +1497,8 @@
                 if (me.ok) {
                     currentUser = await me.json();
                     if (currentUser && currentUser.role === "system_admin") {
-                        document.getElementById("includeDeletedWrap").style.display = "flex";
-                        document.getElementById("adminsTabBtn").style.display = "inline-block";
+                        document.getElementById("includeDeletedWrap").style.display = "block";
+                        document.getElementById("adminsTabBtn").style.display = "inline-flex";
                     }
                 }
                 loginGate.style.display = "none";

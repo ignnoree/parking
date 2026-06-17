@@ -43,16 +43,17 @@ from helpers.plate_tracker import (
 )
 from helpers.light_profile import resolve_light_profile
 from helpers.utils import UPLOAD_TEMP_FOLDER
+from helpers.uuid_utils import parse_uuid
 
 logger = logging.getLogger(__name__)
 
 
-def _track_frame_dest(camera_id: int, track_id: int) -> str:
+def _track_frame_dest(camera_id: uuid.UUID, track_id: int) -> str:
     """Stable temp path for the most-recent OCR frame belonging to a track."""
     return os.path.join(UPLOAD_TEMP_FOLDER, f"trackframe_{camera_id}_{track_id}.jpg")
 
 
-def _save_track_frame(src: str, camera_id: int, track_id: int) -> None:
+def _save_track_frame(src: str, camera_id: uuid.UUID, track_id: int) -> None:
     """Copy the detection frame as the track snapshot only if it is the best-confidence frame so far."""
     dest = _track_frame_dest(camera_id, track_id)
     try:
@@ -61,7 +62,7 @@ def _save_track_frame(src: str, camera_id: int, track_id: int) -> None:
         logger.debug("Could not save track frame cam=%s track=%s", camera_id, track_id)
 
 
-def _cleanup_track_frames(camera_ids: list[int]) -> None:
+def _cleanup_track_frames(camera_ids: list[uuid.UUID]) -> None:
     """Delete leftover per-track frame temp files for the given cameras."""
     for cam_id in camera_ids:
         prefix = f"trackframe_{cam_id}_"
@@ -73,7 +74,7 @@ def _cleanup_track_frames(camera_ids: list[int]) -> None:
             logger.debug("Could not list temp folder for track-frame cleanup cam=%s", cam_id)
 
 
-def _pop_track_frame(camera_id: int, track_id: int) -> str | None:
+def _pop_track_frame(camera_id: uuid.UUID, track_id: int) -> str | None:
     """Return the saved track-frame path if it exists (caller must delete after use)."""
     path = _track_frame_dest(camera_id, track_id)
     return path if os.path.exists(path) else None
@@ -81,7 +82,7 @@ def _pop_track_frame(camera_id: int, track_id: int) -> str | None:
 
 @dataclass(frozen=True)
 class CameraConfig:
-    id: int
+    id: uuid.UUID
     name: str
     source: int | str
     direction: str
@@ -94,7 +95,7 @@ class CameraConfig:
 @dataclass
 class _DetectJob:
     frame: np.ndarray
-    camera_id: int
+    camera_id: uuid.UUID
     direction: str
     light_profile: str
 
@@ -111,21 +112,21 @@ class _CameraTrackState:
 class _WorkerRuntime:
     def __init__(self) -> None:
         self.stop_event = threading.Event()
-        self.primary_camera_id: int | None = None
+        self.primary_camera_id: uuid.UUID | None = None
         self.configs: list[CameraConfig] = []
         self.drainer_threads: list[threading.Thread] = []
         self.preview_thread: threading.Thread | None = None
         self.detect_queue: queue.Queue[_DetectJob | None] = queue.Queue(
             maxsize=camera_detect_queue_size()
         )
-        self.track_states: dict[int, _CameraTrackState] = {}
+        self.track_states: dict[uuid.UUID, _CameraTrackState] = {}
         self.track_lock = threading.Lock()
         self.detect_threads: list[threading.Thread] = []
 
     def alive(self) -> bool:
         return any(t.is_alive() for t in self.drainer_threads)
 
-    def track_state_for(self, camera_id: int) -> _CameraTrackState:
+    def track_state_for(self, camera_id: uuid.UUID) -> _CameraTrackState:
         with self.track_lock:
             state = self.track_states.get(camera_id)
             if state is None:
@@ -249,9 +250,12 @@ def _config_from_row(row: dict) -> CameraConfig | None:
     source = parse_camera_source(row["protocol"], row["source"])
     if source is None:
         return None
+    cid = parse_uuid(row["id"])
+    if cid is None:
+        return None
     interval = default_frame_interval()
     return CameraConfig(
-        id=int(row["id"]),
+        id=cid,
         name=str(row.get("name") or f"Camera {row['id']}"),
         source=source,
         direction=str(row.get("direction") or "entry"),
@@ -834,7 +838,7 @@ def get_worker_status() -> dict:
         for cfg in runtime.configs:
             cameras.append(
                 {
-                    "id": cfg.id,
+                    "id": str(cfg.id),
                     "name": cfg.name,
                     "direction": cfg.direction,
                     "light_profile": cfg.light_profile,
@@ -845,7 +849,7 @@ def get_worker_status() -> dict:
         "running": runtime is not None and runtime.alive(),
         "camera_count": len(cameras),
         "cameras": cameras,
-        "primary_camera_id": runtime.primary_camera_id if runtime else None,
+        "primary_camera_id": str(runtime.primary_camera_id) if runtime and runtime.primary_camera_id else None,
         "ocr_busy": is_busy(),
         "ocr_worker": worker_status(),
     }

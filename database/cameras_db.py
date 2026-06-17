@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import datetime
 import os
+from uuid import UUID
 
 from sqlalchemy import func, select
 
 from database.db import instance_to_dict, session_scope
 from database.models import Camera
+from helpers.uuid_utils import parse_uuid
 
 VALID_PROTOCOLS = ("rtsp", "http", "usb")
 VALID_DIRECTIONS = ("entry", "exit")
@@ -49,12 +51,13 @@ def normalized_source_key(protocol: str, source: str) -> str | None:
     return f"url:{text.lower()}"
 
 
-def source_in_use(protocol: str, source: str, *, exclude_id: int | None = None) -> bool:
+def source_in_use(protocol: str, source: str, *, exclude_id: UUID | str | None = None) -> bool:
     key = normalized_source_key(protocol, source)
     if key is None:
         return False
+    exclude = str(exclude_id) if exclude_id is not None else None
     for row in list_cameras():
-        if exclude_id is not None and int(row["id"]) == exclude_id:
+        if exclude is not None and str(row["id"]) == exclude:
             continue
         existing = normalized_source_key(str(row["protocol"]), str(row["source"]))
         if existing == key:
@@ -76,9 +79,12 @@ def list_cameras(*, enabled_only: bool = False) -> list[dict]:
         return [instance_to_dict(row) for row in session.execute(stmt).scalars().all()]
 
 
-def get_camera_by_id(camera_id: int) -> dict | None:
+def get_camera_by_id(camera_id: UUID | str) -> dict | None:
+    cid = parse_uuid(camera_id)
+    if cid is None:
+        return None
     with session_scope() as session:
-        row = session.get(Camera, camera_id)
+        row = session.get(Camera, cid)
         return instance_to_dict(row) if row else None
 
 
@@ -90,7 +96,7 @@ def insert_camera(
     direction: str = "entry",
     is_enabled: bool = True,
     light_profile: str = "normal",
-) -> int | None:
+) -> UUID | None:
     protocol = protocol.strip().lower()
     direction = direction.strip().lower()
     light_profile = light_profile.strip().lower()
@@ -121,7 +127,7 @@ def insert_camera(
         return row.id
 
 
-def update_camera(camera_id: int, **fields) -> bool:
+def update_camera(camera_id: UUID | str, **fields) -> bool:
     allowed = {
         "name",
         "protocol",
@@ -158,14 +164,17 @@ def update_camera(camera_id: int, **fields) -> bool:
         if not updates["source"]:
             return False
     with session_scope() as session:
-        row = session.get(Camera, camera_id)
+        cid = parse_uuid(camera_id)
+        if cid is None:
+            return False
+        row = session.get(Camera, cid)
         if row is None:
             return False
         protocol = updates.get("protocol", row.protocol)
         source = updates.get("source", row.source)
         if parse_camera_source(protocol, source) is None:
             return False
-        if source_in_use(protocol, source, exclude_id=camera_id):
+        if source_in_use(protocol, source, exclude_id=cid):
             return False
         for key, value in updates.items():
             setattr(row, key, value)
@@ -173,9 +182,12 @@ def update_camera(camera_id: int, **fields) -> bool:
         return True
 
 
-def delete_camera(camera_id: int) -> bool:
+def delete_camera(camera_id: UUID | str) -> bool:
+    cid = parse_uuid(camera_id)
+    if cid is None:
+        return False
     with session_scope() as session:
-        row = session.get(Camera, camera_id)
+        row = session.get(Camera, cid)
         if row is None:
             return False
         session.delete(row)

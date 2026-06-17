@@ -8,7 +8,7 @@ import os
 
 import cv2
 
-from database.vehicles_db import find_vehicle_by_normalized
+from database.enrollment_db import resolve_plate_lookup
 from helpers.plate_alpr import alpr_init_error, get_alpr, ocr_confidence_value
 from helpers.plate_color import detect_plate_color_from_frame
 from helpers.plate_format import clean_plate_ocr_text, is_plausible_plate, plate_format_score
@@ -40,20 +40,7 @@ def _combined_confidence(det_conf: float, ocr_conf: float, fmt_score: float) -> 
 
 
 def _lookup_vehicle(norm: str):
-    vehicle = find_vehicle_by_normalized(norm)
-    if not vehicle:
-        return None
-    exp = vehicle.get("guest_expires_at")
-    if vehicle.get("is_guest") and exp is not None:
-        if isinstance(exp, str):
-            exp_dt = datetime.datetime.fromisoformat(exp.replace("Z", "+00:00"))
-        else:
-            exp_dt = exp
-        if exp_dt.tzinfo is None:
-            exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
-        if exp_dt <= datetime.datetime.now(datetime.timezone.utc):
-            return None
-    return vehicle
+    return resolve_plate_lookup(norm)
 
 
 def build_result_row(
@@ -105,7 +92,8 @@ def build_result_row(
         row.update(
             {
                 "match_status": "registered",
-                "vehicle_id": vehicle["id"],
+                "plate_id": vehicle.get("plate_id"),
+                "vehicle_id": vehicle.get("vehicle_id"),
                 "is_guest": bool(vehicle.get("is_guest")),
                 "owner_name": vehicle.get("owner_name"),
             }

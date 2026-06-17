@@ -3,86 +3,405 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Vehicles | Parking ANPR</title>
+    <title>Vehicles — ParkGuard</title>
     <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --text-subtle: #6e7681;
+            --accent: #4493f8;
+            --accent-hover: #58a6ff;
+            --accent-dim: rgba(68,147,248,.12);
+            --green: #3fb950;
+            --green-dim: rgba(63,185,80,.12);
+            --yellow: #e3b341;
+            --yellow-dim: rgba(227,179,65,.12);
+            --red: #f85149;
+            --red-dim: rgba(248,81,73,.12);
+            --r: 6px;
+            --r-lg: 10px;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; min-height: 100vh; color: #1a2634; }
-        .topbar { background: #1a2634; color: #fff; padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
-        .topbar h1 { font-size: 1.2rem; }
-        .topbar nav a { color: #93c5fd; text-decoration: none; margin-left: 1rem; font-size: 0.9rem; }
-        main { max-width: 1000px; margin: 0 auto; padding: 1.5rem; }
-        section { background: #fff; border-radius: 0.75rem; box-shadow: 0 4px 16px rgba(0,0,0,0.04); padding: 1.25rem 1.5rem; }
-        h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
-        .muted { color: #6b7a88; font-size: 0.88rem; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 1rem; }
-        th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid #eef2f6; }
-        th { font-size: 0.75rem; text-transform: uppercase; color: #6b7a88; }
-        .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.65rem; align-items: end; margin: 1rem 0; }
-        label { display: grid; gap: 0.3rem; font-size: 0.75rem; font-weight: 600; color: #4a5a68; text-transform: uppercase; }
-        input, select { padding: 0.55rem 0.65rem; border: 1px solid #dde3e9; border-radius: 0.45rem; font-size: 0.9rem; }
-        button { border: none; border-radius: 0.5rem; background: #1a2634; color: #fff; font-weight: 600; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.85rem; }
-        button.secondary { background: #e8edf2; color: #1a2634; }
-        button.danger { background: #b91c1c; }
-        button.small { padding: 0.35rem 0.6rem; font-size: 0.78rem; }
-        .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; align-items: center; }
-        .message { display: none; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.88rem; margin-bottom: 1rem; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* ─── TOPBAR ─── */
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            padding: 0 1.5rem;
+            height: 54px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            gap: 1rem;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+            color: var(--text);
+            font-weight: 700;
+            font-size: 0.975rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .brand-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .topbar-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.1rem;
+            flex: 1;
+        }
+
+        .nav-link {
+            padding: 0.35rem 0.7rem;
+            border-radius: var(--r);
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.825rem;
+            font-weight: 500;
+            transition: background .12s, color .12s;
+        }
+
+        .nav-link:hover { background: var(--surface-2); color: var(--text); }
+        .nav-link.active { background: var(--accent-dim); color: var(--accent); }
+
+        /* ─── LAYOUT ─── */
+        .main {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 1.5rem;
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        .page-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .page-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .page-subtitle {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+        }
+
+        /* ─── CARD ─── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
+            overflow: hidden;
+        }
+
+        .card-inner {
+            padding: 1.25rem 1.5rem;
+        }
+
+        /* ─── SEARCH FORM ─── */
+        .search-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 0.75rem;
+            align-items: end;
+        }
+
+        .field {
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        input, select {
+            padding: 0.6rem 0.8rem;
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.875rem;
+            font-family: inherit;
+            transition: border-color .12s, box-shadow .12s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim);
+        }
+
+        input::placeholder { color: var(--text-subtle); }
+
+        select option { background: var(--surface-2); }
+
+        /* ─── BUTTONS ─── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.55rem 0.9rem;
+            border-radius: var(--r);
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text);
+            transition: background .12s, border-color .12s;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+
+        .btn:hover { background: var(--border); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+        .btn-danger {
+            background: var(--red-dim);
+            border-color: rgba(248,81,73,.3);
+            color: var(--red);
+        }
+
+        .btn-danger:hover { background: rgba(248,81,73,.2); }
+        .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+
+        /* ─── TABLE ─── */
+        .table-wrap { overflow-x: auto; }
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th {
+            padding: 0.6rem 1rem;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            font-size: 0.68rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+            font-size: 0.84rem;
+        }
+
+        tr:last-child td { border-bottom: none; }
+        tbody tr { transition: background .1s; }
+        tbody tr:hover { background: rgba(255,255,255,.025); }
+
+        /* ─── BADGES ─── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.68rem;
+            font-weight: 600;
+        }
+
+        .badge-guest    { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(227,179,65,.25); }
+        .badge-resident { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(63,185,80,.25); }
+
+        /* ─── MISC ─── */
+        .mono { font-family: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, monospace; font-size: 0.8rem; }
+        .muted { color: var(--text-muted); text-align: center; padding: 2.5rem; font-size: 0.875rem; }
+        .muted a { color: var(--accent); text-decoration: none; }
+
+        .btn-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--surface-2);
+        }
+
+        .page-info {
+            margin-left: auto;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .message {
+            display: none;
+            padding: 0.7rem 1rem;
+            border-radius: var(--r);
+            font-size: 0.825rem;
+        }
+
         .message.show { display: block; }
-        .message.error { background: #fef2f2; color: #991b1b; }
-        .message.success { background: #ecfdf5; color: #065f46; }
-        .badge { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
-        .badge-guest { background: #fef9c3; color: #854d0e; }
-        .badge-resident { background: #dcfce7; color: #166534; }
-        .mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; }
+        .message.error { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,81,73,.25); }
+        .message.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+
+        .divider { height: 1px; background: var(--border); }
+
+        .search-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
+        }
+
+        .section-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .section-hint {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .photo-link {
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.78rem;
+        }
+
+        .photo-link:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
     <header class="topbar">
-        <h1>Registered vehicles</h1>
-        <nav>
-            <a href="/">Monitor</a>
-            <a href="/submit">Register</a>
-            <a href="/admin">Admin</a>
-            <a href="/login">Login</a>
+        <a href="/" class="brand">
+            <div class="brand-icon">P</div>
+            ParkGuard
+        </a>
+        <nav class="topbar-nav">
+            <a href="/" class="nav-link">Monitor</a>
+            <a href="/vehicles" class="nav-link active">Vehicles</a>
+            <a href="/submit" class="nav-link">Register</a>
+            <a href="/admin" class="nav-link">Admin</a>
+            <a href="/login" class="nav-link">Login</a>
         </nav>
     </header>
-    <main>
+
+    <main class="main">
+        <div class="page-header">
+            <div>
+                <div class="page-title">Registered vehicles</div>
+                <div class="page-subtitle">Search and manage the allowed plate list. Removing a vehicle hides its logs by default.</div>
+            </div>
+            <a href="/submit" class="btn btn-primary">+ Register vehicle</a>
+        </div>
+
         <div id="message" class="message"></div>
-        <section>
-            <h2>Search & remove</h2>
-            <p class="muted">Soft-delete removes a vehicle from the allowed list. Parking logs for that plate are hidden by default.</p>
-            <div class="filters">
-                <label>Plate contains<input id="plateFilter" placeholder="DXB1234"></label>
-                <label>Owner name<input id="ownerFilter" placeholder="Last name"></label>
-                <label>Type
-                    <select id="guestFilter">
-                        <option value="">All</option>
-                        <option value="false">Resident</option>
-                        <option value="true">Guest</option>
-                    </select>
-                </label>
-                <button type="button" id="searchBtn">Search</button>
+
+        <div class="card">
+            <div class="search-section-header">
+                <span class="section-title">Search</span>
+                <span class="section-hint">Filter by plate, owner or type</span>
             </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Plate</th>
-                        <th>Owner</th>
-                        <th>Type</th>
-                        <th>Car</th>
-                        <th>Unit / floor</th>
-                        <th>Photo</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="vehiclesBody"><tr><td colspan="7" class="muted">Log in and search.</td></tr></tbody>
-            </table>
+            <div class="card-inner">
+                <div class="search-grid">
+                    <div class="field">
+                        <label>Plate contains</label>
+                        <input id="plateFilter" placeholder="e.g. DXB1234">
+                    </div>
+                    <div class="field">
+                        <label>Owner name</label>
+                        <input id="ownerFilter" placeholder="Last name">
+                    </div>
+                    <div class="field">
+                        <label>Type</label>
+                        <select id="guestFilter">
+                            <option value="">All</option>
+                            <option value="false">Resident</option>
+                            <option value="true">Guest</option>
+                        </select>
+                    </div>
+                    <div class="field" style="align-self:end;">
+                        <button type="button" id="searchBtn" class="btn btn-primary" style="width:100%;">Search</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Plate</th>
+                            <th>Owner</th>
+                            <th>Type</th>
+                            <th>Car</th>
+                            <th>Unit / Floor</th>
+                            <th>Photo</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="vehiclesBody">
+                        <tr><td class="muted" colspan="7">Log in and search to view vehicles.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
             <div class="btn-row">
-                <button type="button" class="secondary" id="prevBtn" disabled>Previous</button>
-                <button type="button" class="secondary" id="nextBtn" disabled>Next</button>
-                <span class="muted" id="pageInfo"></span>
+                <button type="button" class="btn btn-sm" id="prevBtn" disabled>← Prev</button>
+                <button type="button" class="btn btn-sm" id="nextBtn" disabled>Next →</button>
+                <span class="page-info" id="pageInfo"></span>
             </div>
-        </section>
+        </div>
     </main>
+
     <script>
         let page = 1;
         const pageSize = 25;
@@ -118,10 +437,10 @@
 
         async function loadVehicles(p) {
             page = p;
-            body.innerHTML = '<tr><td colspan="7" class="muted">Loading…</td></tr>';
+            body.innerHTML = '<tr><td class="muted" colspan="7">Loading…</td></tr>';
             const res = await fetch(queryUrl(p), { credentials: "include", headers: authHeaders() });
             if (res.status === 401) {
-                body.innerHTML = '<tr><td colspan="7" class="muted">Please <a href="/login">log in</a>.</td></tr>';
+                body.innerHTML = '<tr><td class="muted" colspan="7">Please <a href="/login">log in</a> to view vehicles.</td></tr>';
                 return;
             }
             const data = await res.json();
@@ -134,7 +453,7 @@
             document.getElementById("pageInfo").textContent = `Page ${data.page} · ${data.total} total`;
             const rows = data.vehicles || [];
             if (!rows.length) {
-                body.innerHTML = '<tr><td colspan="7" class="muted">No vehicles found.</td></tr>';
+                body.innerHTML = '<tr><td class="muted" colspan="7">No vehicles found.</td></tr>';
                 return;
             }
             body.innerHTML = rows.map((v) => {
@@ -144,16 +463,16 @@
                     : "<span class='badge badge-resident'>Resident</span>";
                 const unit = [v.door_number, v.floor_number].filter(Boolean).join(" / ") || "—";
                 const photo = v.reference_image_url
-                    ? "<a href='" + escapeHtml(v.reference_image_url) + "' target='_blank' rel='noopener'>View</a>"
+                    ? "<a href='" + escapeHtml(v.reference_image_url) + "' target='_blank' rel='noopener' class='photo-link'>View</a>"
                     : "—";
                 return "<tr>" +
                     "<td class='mono'>" + escapeHtml(v.plate_number || v.plate_normalized) + "</td>" +
                     "<td>" + escapeHtml(owner) + "</td>" +
                     "<td>" + type + "</td>" +
                     "<td>" + escapeHtml(v.car_model || "—") + "</td>" +
-                    "<td>" + escapeHtml(unit) + "</td>" +
+                    "<td style='font-size:.8rem;color:var(--text-muted);'>" + escapeHtml(unit) + "</td>" +
                     "<td>" + photo + "</td>" +
-                    "<td><button type='button' class='small danger' data-remove-id='" + v.id + "' data-plate='" + escapeHtml(v.plate_normalized) + "'>Remove</button></td>" +
+                    "<td><button type='button' class='btn btn-sm btn-danger' data-remove-id='" + v.id + "' data-plate='" + escapeHtml(v.plate_normalized) + "'>Remove</button></td>" +
                     "</tr>";
             }).join("");
         }
@@ -167,7 +486,7 @@
                 method: "POST",
                 credentials: "include",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
-                body: JSON.stringify({ vehicle_id: parseInt(id, 10) }),
+                body: JSON.stringify({ vehicle_id: id }),
             });
             const data = await res.json();
             if (!res.ok) {

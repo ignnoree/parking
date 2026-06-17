@@ -3,7 +3,7 @@ import os
 import threading
 import time
 
-from database.vehicles_db import list_expired_guest_vehicle_ids, soft_delete_vehicle
+from database.plates_db import list_expired_guest_plate_ids, soft_delete_plate
 from database.logs_db import log_software_event
 
 logger = logging.getLogger(__name__)
@@ -15,18 +15,18 @@ def guest_retention_days() -> int:
 
 def purge_expired_guest_vehicles() -> int:
     purged = 0
-    for vid in list_expired_guest_vehicle_ids():
-        if soft_delete_vehicle(vehicle_id=vid):
+    for pid in list_expired_guest_plate_ids():
+        if soft_delete_plate(plate_id=pid):
             purged += 1
             log_software_event(
                 level="INFO",
                 event="guest.expired",
                 module="helpers.guest_expiry",
-                message="Guest vehicle expired and soft-deleted",
-                metadata=f"vehicle_id={vid}",
+                message="Guest plate expired and soft-deleted",
+                metadata=f"plate_id={pid}",
             )
     if purged:
-        logger.info("Purged %s expired guest vehicle(s)", purged)
+        logger.info("Purged %s expired guest plate(s)", purged)
     return purged
 
 

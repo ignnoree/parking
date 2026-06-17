@@ -3,199 +3,378 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Parking monitor</title>
+    <title>Monitor — ParkGuard</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f1419;
-            color: #e8ecf0;
-            min-height: 100vh;
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --text-subtle: #6e7681;
+            --accent: #4493f8;
+            --accent-hover: #58a6ff;
+            --accent-dim: rgba(68,147,248,.12);
+            --green: #3fb950;
+            --green-dim: rgba(63,185,80,.12);
+            --yellow: #e3b341;
+            --yellow-dim: rgba(227,179,65,.12);
+            --red: #f85149;
+            --red-dim: rgba(248,81,73,.12);
+            --indigo: #818cf8;
+            --indigo-dim: rgba(129,140,248,.12);
+            --r: 6px;
+            --r-lg: 10px;
         }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* ─── TOPBAR ─── */
         .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            padding: 0.75rem 1.25rem;
-            background: #1a2634;
-            border-bottom: 1px solid #2a3a4d;
-            flex-wrap: wrap;
-            gap: 0.5rem;
+            padding: 0 1.5rem;
+            height: 54px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            gap: 1rem;
         }
-        .topbar h1 { font-size: 1.1rem; font-weight: 600; }
-        .topbar nav { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
-        .topbar a { color: #9eb4c8; text-decoration: none; font-size: 0.85rem; }
-        .topbar a:hover { color: #fff; }
-        .main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+            color: var(--text);
+            font-weight: 700;
+            font-size: 0.975rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .brand-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .topbar-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.1rem;
+            flex: 1;
+        }
+
+        .nav-link {
+            padding: 0.35rem 0.7rem;
+            border-radius: var(--r);
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.825rem;
+            font-weight: 500;
+            transition: background .12s, color .12s;
+        }
+
+        .nav-link:hover { background: var(--surface-2); color: var(--text); }
+        .nav-link.active { background: var(--accent-dim); color: var(--accent); }
+
+        /* ─── LAYOUT ─── */
+        .main {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 1.5rem 1.5rem;
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        /* ─── TOOLBAR ─── */
         .toolbar {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 0.75rem;
             flex-wrap: wrap;
-            margin-bottom: 0.75rem;
         }
-        .toolbar-meta { font-size: 0.85rem; color: #9eb4c8; }
+
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-meta {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+
+        .live-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2.5s ease-in-out infinite;
+            flex-shrink: 0;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.25; }
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* ─── BUTTONS ─── */
         .btn {
-            border: 1px solid #3d5268;
-            background: #243447;
-            color: #e8ecf0;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
             padding: 0.45rem 0.85rem;
-            border-radius: 0.4rem;
-            font-size: 0.85rem;
+            border-radius: var(--r);
+            font-size: 0.8rem;
+            font-weight: 500;
             cursor: pointer;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text);
+            transition: background .12s, border-color .12s;
+            white-space: nowrap;
+            font-family: inherit;
         }
-        .btn:hover { background: #2f4258; }
-        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-        .btn-primary { background: #1e4d6b; border-color: #2a6a94; }
-        .btn-primary:hover { background: #256085; }
-        .logs-wrap {
-            border: 1px solid #2a3a4d;
-            border-radius: 0.75rem;
+
+        .btn:hover { background: var(--border); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+        .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+
+        /* ─── CARD / TABLE ─── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
             overflow: hidden;
-            background: #151c24;
         }
-        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-        th, td {
-            padding: 0.55rem 0.65rem;
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th {
+            padding: 0.6rem 1rem;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
             text-align: left;
-            border-bottom: 1px solid #243040;
-            vertical-align: middle;
+            font-size: 0.68rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--text-muted);
+            white-space: nowrap;
         }
-        th { background: #1a2634; color: #9eb4c8; font-weight: 600; }
+
+        td {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+            font-size: 0.84rem;
+        }
+
         tr:last-child td { border-bottom: none; }
-        .mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
-        .muted { color: #6b7a88; text-align: center; padding: 1.5rem; }
+        tbody tr { transition: background .1s; }
+        tbody tr:hover { background: rgba(255,255,255,.025); }
+
+        /* ─── PILLS ─── */
         .pill {
-            display: inline-block;
-            padding: 0.15rem 0.5rem;
+            display: inline-flex;
+            align-items: center;
+            padding: 0.18rem 0.55rem;
             border-radius: 999px;
-            font-size: 0.72rem;
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+        }
+
+        .pill-entry    { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(68,147,248,.25); }
+        .pill-exit     { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(227,179,65,.25); }
+        .pill-registered   { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(63,185,80,.25); }
+        .pill-guest    { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(227,179,65,.25); }
+        .pill-unregistered { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(248,81,73,.25); }
+        .pill-uncertain    { background: var(--indigo-dim); color: var(--indigo); border: 1px solid rgba(129,140,248,.25); }
+
+        /* ─── BADGES ─── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.68rem;
             font-weight: 600;
         }
-        .pill-entry { background: #1e3a4d; color: #7eb8ff; }
-        .pill-exit { background: #3a2e1e; color: #ffcc7d; }
-        .pill-registered { background: #1e4d2b; color: #7dffa8; }
-        .pill-guest { background: #4d3a1e; color: #ffcc7d; }
-        .pill-unregistered { background: #4d1e1e; color: #ff9e9e; }
-        .pill-uncertain { background: #4d3a1e; color: #ffcc7d; }
+
+        .badge-live { background: var(--green-dim); color: var(--green); }
+        .badge-wait { background: var(--yellow-dim); color: var(--yellow); }
+        .badge-off  { background: rgba(255,255,255,.05); color: var(--text-muted); }
+
+        /* ─── MISC CELL HELPERS ─── */
+        .mono { font-family: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, monospace; font-size: 0.78rem; }
+        .muted { color: var(--text-muted); text-align: center; padding: 2.5rem; font-size: 0.875rem; }
+        .muted a { color: var(--accent); text-decoration: none; }
+
+        .color-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            border: 1px solid rgba(255,255,255,.12);
+        }
+
+        .plate-cell { display: flex; align-items: center; gap: 0.4rem; }
+        .owner-cell { font-size: 0.82rem; }
+        .spot-cell  { font-size: 0.74rem; color: var(--text-muted); font-family: 'SF Mono', ui-monospace, monospace; }
+
+        /* ─── PAGINATION ─── */
         .pagination {
             display: flex;
             align-items: center;
             justify-content: space-between;
+            padding: 0.65rem 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--surface-2);
             gap: 0.75rem;
-            padding: 0.75rem;
-            border-top: 1px solid #2a3a4d;
-            background: #1a2634;
         }
-        .live-panel {
-            display: none;
-            margin-top: 1rem;
-            border: 1px solid #2a3a4d;
-            border-radius: 0.75rem;
-            overflow: hidden;
-            background: #151c24;
-        }
+
+        /* ─── LIVE PANEL ─── */
+        .live-panel { display: none; }
         .live-panel.open { display: block; }
+
         .live-panel-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0.6rem 0.85rem;
-            background: #1a2634;
-            border-bottom: 1px solid #2a3a4d;
-            font-size: 0.85rem;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
         }
-        .badge {
-            display: inline-block;
-            font-size: 0.72rem;
-            padding: 0.15rem 0.5rem;
-            border-radius: 999px;
+
+        .live-panel-head-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.875rem;
+            font-weight: 500;
         }
-        .badge-live { background: #1e4d2b; color: #7dffa8; }
-        .badge-wait { background: #4d3a1e; color: #ffcc7d; }
-        .badge-off { background: #4d1e1e; color: #ff9e9e; }
+
         .viewer {
             position: relative;
             background: #000;
-            aspect-ratio: 4 / 3;
+            aspect-ratio: 16/9;
             max-height: 60vh;
         }
+
         .viewer img {
             width: 100%;
             height: 100%;
             object-fit: contain;
             display: block;
-            background: #111;
         }
+
         .viewer-placeholder {
             position: absolute;
             inset: 0;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #6b7a88;
-            font-size: 0.9rem;
-            text-align: center;
-            padding: 1rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
         }
+
         .legend {
-            padding: 0.65rem 0.85rem;
             display: flex;
-            gap: 1rem;
-            font-size: 0.78rem;
-            color: #9eb4c8;
-            border-top: 1px solid #2a3a4d;
+            gap: 1.25rem;
+            padding: 0.6rem 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--surface-2);
+            flex-wrap: wrap;
         }
-        .legend span::before {
-            content: "";
-            display: inline-block;
-            width: 10px;
-            height: 10px;
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .legend-dot {
+            width: 8px;
+            height: 8px;
             border-radius: 2px;
-            margin-right: 0.3rem;
-            vertical-align: -1px;
-        }
-        .legend-resident::before { background: #22c55e; }
-        .legend-guest::before { background: #eab308; }
-        .legend-unknown::before { background: #ef4444; }
-        .legend-uncertain::before { background: #eab308; }
-        .color-dot {
-            display: inline-block;
-            width: 9px;
-            height: 9px;
-            border-radius: 50%;
-            vertical-align: middle;
-            margin-right: 0.3rem;
-            border: 1px solid rgba(255,255,255,0.18);
             flex-shrink: 0;
         }
-        .plate-cell { display: flex; align-items: center; gap: 0.3rem; }
-        .owner-cell { font-size: 0.8rem; color: #c8d8e8; }
-        .spot-cell  { font-size: 0.75rem; color: #9eb4c8; font-family: ui-monospace, monospace; }
     </style>
 </head>
 <body>
     <header class="topbar">
-        <h1>Parking monitor</h1>
-        <nav>
-            <a href="/submit">Register vehicle</a>
-            <a href="/vehicles">Vehicles</a>
-            <a href="/admin">Admin</a>
-            <a href="/login">Login</a>
+        <a href="/" class="brand">
+            <div class="brand-icon">P</div>
+            ParkGuard
+        </a>
+        <nav class="topbar-nav">
+            <a href="/" class="nav-link active">Monitor</a>
+            <a href="/vehicles" class="nav-link">Vehicles</a>
+            <a href="/submit" class="nav-link">Register</a>
+            <a href="/admin" class="nav-link">Admin</a>
+            <a href="/login" class="nav-link">Login</a>
         </nav>
     </header>
 
     <main class="main">
         <div class="toolbar">
-            <div class="toolbar-meta" id="logsMeta">Loading logs…</div>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                <button type="button" class="btn" id="refreshBtn">Refresh</button>
-                <button type="button" class="btn btn-primary" id="toggleLiveBtn">Show live camera</button>
+            <div class="toolbar-meta">
+                <span class="live-dot"></span>
+                <span id="logsMeta">Loading logs…</span>
+            </div>
+            <div class="btn-group">
+                <button type="button" class="btn" id="refreshBtn">↻ Refresh</button>
+                <button type="button" class="btn btn-primary" id="toggleLiveBtn">▶ Live camera</button>
             </div>
         </div>
 
-        <section class="logs-wrap">
+        <section class="card">
             <table>
                 <thead>
                     <tr>
@@ -209,30 +388,33 @@
                     </tr>
                 </thead>
                 <tbody id="logsBody">
-                    <tr><td class="muted" colspan="6">Loading…</td></tr>
+                    <tr><td class="muted" colspan="7">Loading…</td></tr>
                 </tbody>
             </table>
             <div class="pagination">
-                <button type="button" class="btn" id="prevBtn" disabled>Previous</button>
+                <button type="button" class="btn btn-sm" id="prevBtn" disabled>← Prev</button>
                 <span class="toolbar-meta" id="pageInfo">Page 1</span>
-                <button type="button" class="btn" id="nextBtn" disabled>Next</button>
+                <button type="button" class="btn btn-sm" id="nextBtn" disabled>Next →</button>
             </div>
         </section>
 
-        <section class="live-panel" id="livePanel" aria-hidden="true">
+        <section class="card live-panel" id="livePanel" aria-hidden="true">
             <div class="live-panel-head">
-                <span>Live camera <span id="camBadge" class="badge badge-wait">Off</span></span>
-                <button type="button" class="btn" id="hideLiveBtn">Hide</button>
+                <div class="live-panel-head-left">
+                    <span>Live camera</span>
+                    <span id="camBadge" class="badge badge-off">Off</span>
+                </div>
+                <button type="button" class="btn btn-sm" id="hideLiveBtn">Hide</button>
             </div>
             <div class="viewer">
-                <img id="liveStream" alt="Server camera live view" style="display:none;">
+                <img id="liveStream" alt="Live camera feed" style="display:none;">
                 <div class="viewer-placeholder" id="placeholder">Open live view to connect…</div>
             </div>
             <div class="legend">
-                <span class="legend-resident">Registered</span>
-                <span class="legend-guest">Guest</span>
-                <span class="legend-unknown">Unregistered</span>
-                <span class="legend-uncertain">Uncertain</span>
+                <div class="legend-item"><div class="legend-dot" style="background:#3fb950;"></div> Registered</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div> Guest</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#f85149;"></div> Unregistered</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#818cf8;"></div> Uncertain</div>
             </div>
         </section>
     </main>
@@ -339,7 +521,7 @@
             if (!row.snapshot_url) return "—";
             return (
                 "<a href='" + escapeHtml(row.snapshot_url) + "' target='_blank' rel='noopener'>" +
-                "<img src='" + escapeHtml(row.snapshot_url) + "' alt='' style='width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #3d5268;' loading='lazy'>" +
+                "<img src='" + escapeHtml(row.snapshot_url) + "' alt='' style='width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #30363d;' loading='lazy'>" +
                 "</a>"
             );
         }
@@ -358,8 +540,8 @@
                     { credentials: "include", headers: authHeaders() }
                 );
                 if (res.status === 401) {
-                    logsMeta.textContent = "Log in required.";
-                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Please <a href='/login' style='color:#7eb8ff'>log in</a>.</td></tr>";
+                    logsMeta.textContent = "Login required.";
+                    logsBody.innerHTML = "<tr><td class='muted' colspan='7'>Please <a href='/login'>log in</a> to view logs.</td></tr>";
                     prevBtn.disabled = true;
                     nextBtn.disabled = true;
                     return;
@@ -437,7 +619,7 @@
             liveOpen = true;
             livePanel.classList.add("open");
             livePanel.setAttribute("aria-hidden", "false");
-            toggleLiveBtn.textContent = "Hide live camera";
+            toggleLiveBtn.textContent = "■ Hide camera";
             placeholder.style.display = "flex";
             placeholder.textContent = "Connecting to camera…";
             streamImg.style.display = "none";
@@ -473,7 +655,7 @@
             liveOpen = false;
             livePanel.classList.remove("open");
             livePanel.setAttribute("aria-hidden", "true");
-            toggleLiveBtn.textContent = "Show live camera";
+            toggleLiveBtn.textContent = "▶ Live camera";
             streamImg.src = "";
             streamImg.style.display = "none";
             placeholder.style.display = "flex";

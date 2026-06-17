@@ -3,94 +3,219 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Admin Login | Parking ANPR</title>
+    <title>Sign in — ParkGuard</title>
     <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #4493f8;
+            --accent-hover: #58a6ff;
+            --accent-dim: rgba(68,147,248,.12);
+            --green: #3fb950;
+            --green-dim: rgba(63,185,80,.12);
+            --red: #f85149;
+            --red-dim: rgba(248,81,73,.12);
+            --r: 7px;
+            --r-lg: 12px;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #f5f7fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 1rem;
+            padding: 1.5rem;
+            font-size: 14px;
+            line-height: 1.5;
         }
-        .container {
+
+        .login-wrapper {
             width: 100%;
-            max-width: 420px;
-            background: #fff;
-            border-radius: 1rem;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+            max-width: 400px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.6rem;
+            margin-bottom: 2rem;
+            text-decoration: none;
+            color: var(--text);
+        }
+
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--accent);
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .brand-name {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
             overflow: hidden;
         }
-        .header { padding: 1.5rem; border-bottom: 1px solid #eef2f6; }
-        .header h1 { font-size: 1.3rem; color: #1a2634; margin-bottom: 0.3rem; }
-        .header p { color: #6b7a88; font-size: 0.9rem; }
-        form { padding: 1.5rem; display: grid; gap: 1rem; }
-        .field { display: grid; gap: 0.4rem; }
-        label {
-            font-size: 0.83rem;
-            color: #4a5a68;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.02em;
+
+        .card-header {
+            padding: 1.5rem 1.75rem 1.25rem;
+            border-bottom: 1px solid var(--border);
         }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .card-subtitle {
+            font-size: 0.825rem;
+            color: var(--text-muted);
+        }
+
+        .card-body {
+            padding: 1.5rem 1.75rem;
+            display: grid;
+            gap: 1rem;
+        }
+
+        .field {
+            display: grid;
+            gap: 0.4rem;
+        }
+
+        label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
         input {
             width: 100%;
-            padding: 0.75rem 0.9rem;
-            border-radius: 0.55rem;
-            border: 1px solid #d8e1ea;
-            font-size: 0.95rem;
-            outline: none;
+            padding: 0.65rem 0.9rem;
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.925rem;
+            font-family: inherit;
+            transition: border-color .15s, box-shadow .15s;
         }
+
         input:focus {
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim);
         }
-        button {
+
+        input::placeholder { color: #4a5568; }
+
+        .btn-submit {
+            width: 100%;
+            padding: 0.7rem 1rem;
             border: none;
-            border-radius: 0.65rem;
-            background: #1a2634;
+            border-radius: var(--r);
+            background: var(--accent);
             color: #fff;
+            font-size: 0.9rem;
             font-weight: 600;
-            font-size: 0.95rem;
-            padding: 0.85rem 1rem;
             cursor: pointer;
+            font-family: inherit;
+            transition: background .15s, transform .1s;
         }
-        button:hover { background: #253549; }
-        button:disabled { cursor: not-allowed; opacity: 0.65; }
+
+        .btn-submit:hover { background: var(--accent-hover); }
+        .btn-submit:active { transform: scale(.99); }
+        .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
         .message {
             display: none;
-            margin: 0 1.5rem 1.5rem;
-            padding: 0.75rem;
-            border-radius: 0.5rem;
-            font-size: 0.88rem;
+            padding: 0.7rem 0.9rem;
+            border-radius: var(--r);
+            font-size: 0.825rem;
+            line-height: 1.4;
         }
+
         .message.show { display: block; }
-        .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-        .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+        .message.error { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,81,73,.25); }
+        .message.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+
+        .card-footer {
+            padding: 1rem 1.75rem;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .card-footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .card-footer a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Parking admin login</h1>
-            <p>Sign in to view logs and register vehicles.</p>
+    <div class="login-wrapper">
+        <a href="/" class="brand">
+            <div class="brand-icon">P</div>
+            <span class="brand-name">ParkGuard</span>
+        </a>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Welcome back</div>
+                <div class="card-subtitle">Sign in to access the parking dashboard</div>
+            </div>
+
+            <div class="card-body">
+                <div id="errorMessage" class="message error"></div>
+                <div id="successMessage" class="message success"></div>
+
+                <form id="loginForm" style="display:contents;">
+                    <div class="field">
+                        <label for="username">Username</label>
+                        <input id="username" name="username" type="text" autocomplete="username" required placeholder="Enter your username">
+                    </div>
+                    <div class="field">
+                        <label for="password">Password</label>
+                        <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password">
+                    </div>
+                    <button id="submitBtn" type="submit" class="btn-submit">Sign in</button>
+                </form>
+            </div>
+
+            <div class="card-footer">
+                <a href="/">← Back to monitor</a>
+            </div>
         </div>
-        <form id="loginForm">
-            <div class="field">
-                <label for="username">Username</label>
-                <input id="username" name="username" type="text" autocomplete="username" required>
-            </div>
-            <div class="field">
-                <label for="password">Password</label>
-                <input id="password" name="password" type="password" autocomplete="current-password" required>
-            </div>
-            <button id="submitBtn" type="submit">Login</button>
-        </form>
-        <div id="errorMessage" class="message error"></div>
-        <div id="successMessage" class="message success"></div>
     </div>
+
     <script>
         const loginForm = document.getElementById("loginForm");
         const submitBtn = document.getElementById("submitBtn");
@@ -109,6 +234,7 @@
             event.preventDefault();
             setMessage(errorMessage, "");
             submitBtn.disabled = true;
+            submitBtn.textContent = "Signing in…";
             try {
                 const response = await fetch("/auth/login", {
                     method: "POST",
@@ -126,12 +252,13 @@
                 localStorage.setItem("access_token", payload.access_token || "");
                 localStorage.setItem("refresh_token", payload.refresh_token || "");
                 localStorage.setItem("token_type", payload.token_type || "Bearer");
-                setMessage(successMessage, "Login successful. Redirecting...");
+                setMessage(successMessage, "Login successful. Redirecting…");
                 setTimeout(() => { window.location.href = "/"; }, 450);
             } catch (_) {
                 setMessage(errorMessage, "Request failed. Please try again.");
             } finally {
                 submitBtn.disabled = false;
+                submitBtn.textContent = "Sign in";
             }
         });
     </script>

@@ -36,6 +36,8 @@ def login():
             module="routes.auth_routes",
             message="Invalid login credentials",
             metadata=f"username={username!r}",
+            admin_id=admin["id"] if admin else None,
+            admin_username=str(username),
         )
         return jsonify({"error": "Invalid credentials"}), 401
     admin_id = admin["id"]
@@ -61,6 +63,8 @@ def login():
         module="routes.auth_routes",
         message="User logged in",
         metadata=f"admin_id={admin_id} username={admin['username']!r} role={extra['role']!r}",
+        admin_id=admin_id,
+        admin_username=admin["username"],
     )
     return response
 
@@ -68,7 +72,7 @@ def login():
 @auth_bp.get("/me")
 @jwt_required()
 def auth_me():
-    admin = get_admin_by_id(int(get_jwt_identity()))
+    admin = get_admin_by_id(get_jwt_identity())
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify({"id": admin["id"], "username": admin["username"], "role": admin.get("role")})
@@ -78,21 +82,23 @@ def auth_me():
 @jwt_required(refresh=True)
 def refresh():
     jwt_data = get_jwt()
-    admin_id = get_jwt_identity()
-    admin = get_admin_by_id(int(admin_id)) if admin_id else None
+    admin_id_raw = get_jwt_identity()
+    admin = get_admin_by_id(admin_id_raw) if admin_id_raw else None
     if not admin or admin.get("refresh_jti") != jwt_data.get("jti"):
         log_software_event(
             level="WARN",
             event="auth.refresh.failed",
             module="routes.auth_routes",
             message="Invalid refresh token",
-            metadata=f"admin_id={admin_id!r}",
+            metadata=f"admin_id={admin_id_raw!r}",
+            admin_id=admin_id_raw,
+            admin_username=admin["username"] if admin else None,
         )
         return jsonify({"error": "Invalid refresh token"}), 401
     extra = _token_claims_for_admin(admin)
-    access_token = create_access_token(identity=str(admin_id), additional_claims=extra)
-    refresh_token = create_refresh_token(identity=str(admin_id), additional_claims=extra)
-    update_admin_refresh_jti(int(admin_id), decode_token(refresh_token)["jti"])
+    access_token = create_access_token(identity=str(admin_id_raw), additional_claims=extra)
+    refresh_token = create_refresh_token(identity=str(admin_id_raw), additional_claims=extra)
+    update_admin_refresh_jti(admin_id_raw, decode_token(refresh_token)["jti"])
     response = jsonify({"access_token": access_token, "refresh_token": refresh_token, "token_type": "Bearer"})
     set_access_cookies(response, access_token)
     set_refresh_cookies(response, refresh_token)

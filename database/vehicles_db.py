@@ -1,85 +1,83 @@
 from __future__ import annotations
 
 import datetime
+from uuid import UUID
 
 from sqlalchemy import func, select
 
-from database.db import session_scope, instance_to_dict
-from database.models import Vehicle
+from database.db import instance_to_dict, session_scope
+from database.models import Plate, PlateAssignment, Vehicle
 from helpers.plate_normalize import normalize_plate
+from helpers.uuid_utils import parse_uuid
 
 
-def _active_filter(stmt):
+def _active_vehicles(stmt):
     return stmt.where(Vehicle.deleted_at.is_(None))
-
-
-def find_vehicle_by_normalized(plate_normalized: str) -> dict | None:
-    with session_scope() as session:
-        row = session.scalar(
-            _active_filter(select(Vehicle).where(Vehicle.plate_normalized == plate_normalized))
-        )
-        return instance_to_dict(row) if row else None
 
 
 def insert_vehicle(
     *,
-    plate_number: str,
     owner_name: str | None = None,
     owner_lastname: str | None = None,
     car_model: str | None = None,
     door_number: str | None = None,
     floor_number: str | None = None,
     parking_spot: str | None = None,
-    plate_color: str = "default",
     vehicle_class: str = "car",
-    is_guest: bool = False,
-    guest_expires_at: datetime.datetime | None = None,
     reference_image_path: str | None = None,
     metadata: dict | None = None,
-) -> tuple[int, str] | None:
-    normalized = normalize_plate(plate_number)
-    if not normalized:
-        return None
+) -> UUID | None:
     with session_scope() as session:
-        clash = session.scalar(
-            _active_filter(select(Vehicle.id).where(Vehicle.plate_normalized == normalized))
-        )
-        if clash is not None:
-            return None
         row = Vehicle(
-            plate_number=plate_number.strip(),
-            plate_normalized=normalized,
             owner_name=owner_name,
             owner_lastname=owner_lastname,
             car_model=car_model,
             door_number=door_number,
             floor_number=floor_number,
             parking_spot=parking_spot,
-            plate_color=plate_color or "default",
             vehicle_class=vehicle_class or "car",
-            is_guest=is_guest,
-            guest_expires_at=guest_expires_at,
             reference_image_path=reference_image_path,
             metadata_=metadata,
         )
         session.add(row)
         session.flush()
-        return row.id, normalized
+        return row.id
 
 
-def soft_delete_vehicle(*, vehicle_id: int | None = None, plate_number: str | None = None) -> bool:
+def soft_delete_vehicle(*, vehicle_id: UUID | str | None = None, plate_number: str | None = None) -> bool:
     with session_scope() as session:
         row = None
         if vehicle_id is not None:
-            row = session.get(Vehicle, vehicle_id)
+            vid = parse_uuid(vehicle_id)
+            if vid is None:
+                return False
+            row = session.get(Vehicle, vid)
         elif plate_number:
             norm = normalize_plate(plate_number)
             row = session.scalar(
-                _active_filter(select(Vehicle).where(Vehicle.plate_normalized == norm))
+                _active_vehicles(
+                    select(Vehicle)
+                    .join(PlateAssignment, PlateAssignment.vehicle_id == Vehicle.id)
+                    .join(Plate, Plate.id == PlateAssignment.plate_id)
+                    .where(
+                        Plate.plate_normalized == norm,
+                        Plate.deleted_at.is_(None),
+                        PlateAssignment.deleted_at.is_(None),
+                    )
+                    .order_by(PlateAssignment.is_primary.desc())
+                )
             )
         if row is None or row.deleted_at is not None:
             return False
-        row.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        row.deleted_at = now
+        for assignment in session.execute(
+            select(PlateAssignment).where(
+                PlateAssignment.vehicle_id == row.id,
+                PlateAssignment.deleted_at.is_(None),
+            )
+        ).scalars():
+            assignment.deleted_at = now
         return True
 
 
@@ -89,18 +87,34 @@ def _vehicles_filter_stmt(
     owner: str | None = None,
     is_guest: bool | None = None,
 ):
-    stmt = _active_filter(select(Vehicle).order_by(Vehicle.id.desc()))
+    stmt = _active_vehicles(select(Vehicle).order_by(Vehicle.created_at.desc()))
     if plate:
         norm = normalize_plate(plate)
-        stmt = stmt.where(Vehicle.plate_normalized.ilike(f"%{norm}%"))
+        stmt = (
+            stmt.join(PlateAssignment, PlateAssignment.vehicle_id == Vehicle.id)
+            .join(Plate, Plate.id == PlateAssignment.plate_id)
+            .where(
+                Plate.plate_normalized.ilike(f"%{norm}%"),
+                Plate.deleted_at.is_(None),
+                PlateAssignment.deleted_at.is_(None),
+            )
+        )
     if owner:
         term = f"%{owner.strip()}%"
         stmt = stmt.where(
             (Vehicle.owner_name.ilike(term)) | (Vehicle.owner_lastname.ilike(term))
         )
     if is_guest is not None:
-        stmt = stmt.where(Vehicle.is_guest == is_guest)
-    return stmt
+        if plate is None:
+            stmt = stmt.join(PlateAssignment, PlateAssignment.vehicle_id == Vehicle.id).join(
+                Plate, Plate.id == PlateAssignment.plate_id
+            )
+        stmt = stmt.where(
+            Plate.is_guest == is_guest,
+            Plate.deleted_at.is_(None),
+            PlateAssignment.deleted_at.is_(None),
+        )
+    return stmt.distinct()
 
 
 def count_vehicles(
@@ -110,19 +124,8 @@ def count_vehicles(
     is_guest: bool | None = None,
 ) -> int:
     with session_scope() as session:
-        stmt = select(func.count()).select_from(Vehicle)
-        stmt = _active_filter(stmt)
-        if plate:
-            norm = normalize_plate(plate)
-            stmt = stmt.where(Vehicle.plate_normalized.ilike(f"%{norm}%"))
-        if owner:
-            term = f"%{owner.strip()}%"
-            stmt = stmt.where(
-                (Vehicle.owner_name.ilike(term)) | (Vehicle.owner_lastname.ilike(term))
-            )
-        if is_guest is not None:
-            stmt = stmt.where(Vehicle.is_guest == is_guest)
-        return int(session.scalar(stmt) or 0)
+        subq = _vehicles_filter_stmt(plate=plate, owner=owner, is_guest=is_guest).subquery()
+        return int(session.scalar(select(func.count()).select_from(subq)) or 0)
 
 
 def list_vehicles(
@@ -136,42 +139,50 @@ def list_vehicles(
     with session_scope() as session:
         stmt = _vehicles_filter_stmt(plate=plate, owner=owner, is_guest=is_guest)
         stmt = stmt.limit(limit).offset(offset)
-        rows = []
-        for row in session.execute(stmt).scalars().all():
-            d = instance_to_dict(row)
-            if d.get("guest_expires_at") is not None and hasattr(d["guest_expires_at"], "isoformat"):
-                d["guest_expires_at"] = d["guest_expires_at"].isoformat()
-            rows.append(d)
-        return rows
+        vehicle_rows = session.execute(stmt).scalars().all()
+        return [_vehicle_with_plates(session, row) for row in vehicle_rows]
 
 
-def get_vehicles_by_ids(vehicle_ids: list[int]) -> dict[int, dict]:
-    """Fetch multiple vehicles by id in one query. Returns {id: vehicle_dict}."""
+def get_vehicles_by_ids(vehicle_ids: list) -> dict[str, dict]:
     if not vehicle_ids:
         return {}
+    parsed: list[UUID] = []
+    for vid in vehicle_ids:
+        uid = parse_uuid(vid)
+        if uid is not None:
+            parsed.append(uid)
+    if not parsed:
+        return {}
     with session_scope() as session:
-        rows = session.execute(
-            select(Vehicle).where(Vehicle.id.in_(vehicle_ids))
-        ).scalars().all()
-        out: dict[int, dict] = {}
-        for row in rows:
-            d = instance_to_dict(row)
-            if d.get("guest_expires_at") is not None and hasattr(d["guest_expires_at"], "isoformat"):
-                d["guest_expires_at"] = d["guest_expires_at"].isoformat()
-            out[d["id"]] = d
-        return out
+        rows = session.execute(select(Vehicle).where(Vehicle.id.in_(parsed))).scalars().all()
+        return {str(row.id): _vehicle_with_plates(session, row) for row in rows}
 
 
-def list_expired_guest_vehicle_ids() -> list[int]:
-    now = datetime.datetime.now(datetime.timezone.utc)
-    with session_scope() as session:
-        rows = session.execute(
-            _active_filter(
-                select(Vehicle.id).where(
-                    Vehicle.is_guest.is_(True),
-                    Vehicle.guest_expires_at.is_not(None),
-                    Vehicle.guest_expires_at <= now,
-                )
-            )
-        ).scalars().all()
-        return list(rows)
+def _vehicle_with_plates(session, vehicle: Vehicle) -> dict:
+    d = instance_to_dict(vehicle)
+    plates = session.execute(
+        select(Plate, PlateAssignment)
+        .join(PlateAssignment, PlateAssignment.plate_id == Plate.id)
+        .where(
+            PlateAssignment.vehicle_id == vehicle.id,
+            PlateAssignment.deleted_at.is_(None),
+            Plate.deleted_at.is_(None),
+        )
+        .order_by(PlateAssignment.is_primary.desc(), PlateAssignment.created_at.desc())
+    ).all()
+    plate_rows: list[dict] = []
+    for plate, assignment in plates:
+        p = instance_to_dict(plate)
+        if p.get("guest_expires_at") is not None and hasattr(p["guest_expires_at"], "isoformat"):
+            p["guest_expires_at"] = p["guest_expires_at"].isoformat()
+        p["is_primary"] = assignment.is_primary
+        plate_rows.append(p)
+    d["plates"] = plate_rows
+    primary = plate_rows[0] if plate_rows else None
+    d["plate_number"] = primary["plate_number"] if primary else None
+    d["plate_normalized"] = primary["plate_normalized"] if primary else None
+    d["plate_color"] = primary.get("plate_color") if primary else None
+    d["is_guest"] = bool(primary.get("is_guest")) if primary else False
+    if primary and primary.get("guest_expires_at"):
+        d["guest_expires_at"] = primary["guest_expires_at"]
+    return d

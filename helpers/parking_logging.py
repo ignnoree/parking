@@ -245,6 +245,7 @@ def log_parking_events_for_results(
         if not norm:
             continue
         match_status = item.get("match_status") or "unregistered"
+        plate_id = item.get("plate_id")
         vehicle_id = item.get("vehicle_id")
         track_confirmed = bool(item.get("track_confirmed"))
 
@@ -258,8 +259,10 @@ def log_parking_events_for_results(
 
         canonical = canonical_plate(norm, now_utc)
 
-        if match_status == "registered" and vehicle_id is not None:
-            key = f"registered:{int(vehicle_id)}:{direction}"
+        if match_status == "registered" and plate_id is not None:
+            key = f"registered:{plate_id}:{direction}"
+        elif match_status == "registered" and vehicle_id is not None:
+            key = f"registered:{vehicle_id}:{direction}"
         else:
             key = f"unregistered:{canonical}:{direction}"
 
@@ -279,7 +282,7 @@ def log_parking_events_for_results(
                 _recent_unregistered_logs.append((canonical, direction, now_utc))
             _read_history.append((canonical, now_utc))
 
-        is_registered = match_status == "registered" and vehicle_id is not None
+        is_registered = match_status == "registered" and (plate_id is not None or vehicle_id is not None)
         source_folder, crop_folder = parking_snapshot_dirs(registered=is_registered)
         if is_registered not in source_frames:
             source_frames[is_registered] = _persist_source_frame(
@@ -318,7 +321,8 @@ def log_parking_events_for_results(
             plate_number=item.get("plate_text"),
             direction=direction,
             match_status=match_status,
-            vehicle_id=int(vehicle_id) if vehicle_id is not None else None,
+            plate_id=plate_id,
+            vehicle_id=vehicle_id,
             is_guest=bool(item.get("is_guest")),
             confidence=item.get("confidence"),
             snapshot_path=crop_path or source_frame,
