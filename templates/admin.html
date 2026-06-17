@@ -572,12 +572,6 @@
                             <label>To</label>
                             <input id="parkingTo" type="datetime-local">
                         </div>
-                        <div class="field" id="includeDeletedWrap" style="display:none; align-self:end;">
-                            <label class="check-inline">
-                                <input type="checkbox" id="includeDeleted" style="width:auto;">
-                                Include soft-deleted
-                            </label>
-                        </div>
                         <div class="field" style="align-self:end;">
                             <button type="button" class="btn btn-primary" id="parkingFilterBtn" style="width:100%;">Apply filters</button>
                         </div>
@@ -843,6 +837,14 @@
         </div>
     </main>
 
+    <!-- Vehicle info modal -->
+    <div id="vehicleInfoModal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.55);align-items:center;justify-content:center;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:1.25rem 1.5rem;max-width:380px;width:92%;position:relative;box-shadow:0 8px 32px rgba(0,0,0,.5);">
+            <button id="vehicleInfoClose" class="btn btn-sm btn-ghost" style="position:absolute;top:0.6rem;right:0.6rem;padding:0.2rem 0.5rem;">✕</button>
+            <div id="vehicleInfoContent"></div>
+        </div>
+    </div>
+
     <script>
         const messageEl = document.getElementById("message");
         const loginGate = document.getElementById("loginGate");
@@ -859,6 +861,7 @@
         let parkingPage = 1;
         let softwarePage = 1;
         let activeTab = "cameras";
+        const logDataMap = {};
 
         function authHeaders() {
             const token = localStorage.getItem("access_token");
@@ -892,11 +895,11 @@
             if (row.match_status === "uncertain") {
                 return "<span class='pill pill-uncertain'>Uncertain</span>";
             }
-            if (row.match_status === "registered" && row.is_guest) {
-                return "<span class='pill pill-guest'>Guest</span>";
-            }
             if (row.match_status === "registered") {
-                return "<span class='pill pill-registered'>Registered</span>";
+                const pillCls = row.is_guest ? "pill-guest" : "pill-registered";
+                const pillLabel = row.is_guest ? "Guest" : "Registered";
+                const infoBtn = "<button type='button' class='btn btn-sm btn-ghost' style='padding:0.1rem 0.4rem;font-size:0.7rem;margin-left:0.3rem;' data-info-log='" + escapeHtml(String(row.id)) + "'>ℹ info</button>";
+                return "<span class='pill " + pillCls + "'>" + pillLabel + "</span>" + infoBtn;
             }
             return "<span class='pill pill-unregistered'>Unregistered</span>";
         }
@@ -1013,7 +1016,6 @@
             const toRaw = document.getElementById("parkingTo").value;
             if (fromRaw) params.set("from_date", new Date(fromRaw).toISOString());
             if (toRaw) params.set("to_date", new Date(toRaw).toISOString());
-            if (document.getElementById("includeDeleted").checked) params.set("include_deleted", "true");
             return "/api/parking-logs?" + params.toString();
         }
 
@@ -1155,6 +1157,7 @@
                 body.innerHTML = '<tr><td colspan="8" class="muted">No parking logs match filters.</td></tr>';
                 return;
             }
+            rows.forEach((r) => { logDataMap[r.id] = r; });
             body.innerHTML = rows.map((r) => (
                 "<tr>" +
                 "<td class='mono'>" + escapeHtml(formatTime(r.logged_at)) + "</td>" +
@@ -1316,7 +1319,46 @@
 
         cancelEditBtn.addEventListener("click", resetForm);
 
+        function showVehicleInfoModal(r) {
+            const owner = [r.owner_name, r.owner_lastname].filter(Boolean).join(" ") || "—";
+            const lines = [
+                ["Plate",         r.plate_number || r.plate_normalized || "—"],
+                ["Type",          r.is_guest ? "Guest" : "Resident"],
+                ["Owner",         owner],
+                ["Car",           r.car_model || "—"],
+                ["Parking spot",  r.parking_spot || "—"],
+                ["Floor",         r.floor_number != null ? String(r.floor_number) : "—"],
+                ["Door",          r.door_number  != null ? String(r.door_number)  : "—"],
+            ];
+            document.getElementById("vehicleInfoContent").innerHTML =
+                "<div style='font-weight:600;font-size:.9rem;margin-bottom:1rem;'>Vehicle information</div>" +
+                "<table style='width:100%;border-collapse:collapse;font-size:.82rem;'>" +
+                lines.map(([k, v]) =>
+                    "<tr><td style='color:var(--text-muted);padding:.3rem 0;width:110px;'>" + escapeHtml(k) + "</td>" +
+                    "<td style='font-weight:500;padding:.3rem 0;'>" + escapeHtml(v) + "</td></tr>"
+                ).join("") +
+                "</table>";
+            const modal = document.getElementById("vehicleInfoModal");
+            modal.style.display = "flex";
+        }
+
+        document.getElementById("vehicleInfoClose").addEventListener("click", () => {
+            document.getElementById("vehicleInfoModal").style.display = "none";
+        });
+        document.getElementById("vehicleInfoModal").addEventListener("click", (e) => {
+            if (e.target === document.getElementById("vehicleInfoModal")) {
+                document.getElementById("vehicleInfoModal").style.display = "none";
+            }
+        });
+
         document.getElementById("parkingLogsBody").addEventListener("click", async (e) => {
+            const infoId = e.target.getAttribute("data-info-log");
+            if (infoId) {
+                const r = logDataMap[infoId];
+                if (r) showVehicleInfoModal(r);
+                return;
+            }
+
             const logId = e.target.getAttribute("data-del-log");
             if (logId) {
                 if (!confirm("Soft-delete this parking log row?")) return;
@@ -1497,7 +1539,6 @@
                 if (me.ok) {
                     currentUser = await me.json();
                     if (currentUser && currentUser.role === "system_admin") {
-                        document.getElementById("includeDeletedWrap").style.display = "block";
                         document.getElementById("adminsTabBtn").style.display = "inline-flex";
                     }
                 }

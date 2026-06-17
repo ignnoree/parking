@@ -36,6 +36,7 @@ def fix_ocr_confusions(raw: str | None) -> str:
     return raw.strip().translate(_OCR_CHAR_FIXES)
 
 
+
 def ocr_read_variants(cleaned: str) -> list[str]:
     """
     Alternate reads for visually ambiguous characters — both forms kept for ranking

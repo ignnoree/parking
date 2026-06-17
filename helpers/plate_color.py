@@ -81,7 +81,7 @@ def _classify_lab(bg_pixels: np.ndarray) -> str:
 
     # ── Chromatic — require a decisive signal on the relevant axis ────────────
     # Blue:   strong -b*, |b*| must dominate |a*| to reject blue-grey borders
-    if b_s < -16 and abs(b_s) > abs(a_s) * 1.2:
+    if b_s < -13 and abs(b_s) > abs(a_s) * 1.2:
         return "blue"
 
     # Green:  strong -a*, and -a* must clearly dominate +b* so that
