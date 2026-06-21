@@ -90,6 +90,7 @@ class CameraConfig:
     frame_interval_seconds: float
     network: bool
     file_source: bool
+    image_source: bool
 
 
 @dataclass
@@ -144,8 +145,20 @@ _latest_frame: np.ndarray | None = None
 _frame_generation: int = 0
 
 
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
+
+
 def _is_network_source(source: int | str) -> bool:
     return isinstance(source, str) and source.lower().startswith(("rtsp", "http"))
+
+
+def _is_image_source(source: int | str) -> bool:
+    if isinstance(source, int) or _is_network_source(source):
+        return False
+    if not os.path.isfile(source):
+        return False
+    _, ext = os.path.splitext(str(source))
+    return ext.lower() in _IMAGE_EXTENSIONS
 
 
 def _is_file_source(source: int | str) -> bool:
@@ -264,6 +277,7 @@ def _config_from_row(row: dict) -> CameraConfig | None:
         network=_is_network_source(source),
         file_source=_is_file_source(source)
         or (isinstance(source, str) and os.path.isfile(source)),
+        image_source=_is_image_source(source),
     )
 
 
@@ -627,6 +641,61 @@ def _preview_publisher_loop(stop_event: threading.Event) -> None:
         stop_event.wait(pause)
 
 
+def _drainer_loop_image(
+    stop_event: threading.Event,
+    config: CameraConfig,
+    detect_queue: queue.Queue[_DetectJob | None],
+    *,
+    is_primary: bool,
+) -> None:
+    """Drainer for static image sources: load once, serve the same frame repeatedly."""
+    reconnect_delay = camera_reconnect_delay_seconds()
+    frame: np.ndarray | None = None
+    last_detect = 0.0
+    while not stop_event.is_set():
+        if frame is None:
+            frame = cv2.imread(str(config.source))
+            if frame is None:
+                logger.error(
+                    "Failed to load image camera source: id=%s path=%r",
+                    config.id,
+                    config.source,
+                )
+                if is_primary:
+                    _clear_latest_frame()
+                    set_camera_disconnected()
+                stop_event.wait(reconnect_delay)
+                continue
+            logger.info(
+                "Image source loaded: id=%s name=%r path=%r",
+                config.id,
+                config.name,
+                config.source,
+            )
+            if is_primary:
+                _set_latest_frame(frame)
+            last_detect = 0.0
+
+        now = time.monotonic()
+        if now - last_detect >= config.frame_interval_seconds:
+            last_detect = now
+            _enqueue_detect(
+                _DetectJob(
+                    frame=frame.copy(),
+                    camera_id=config.id,
+                    direction=config.direction,
+                    light_profile=config.light_profile,
+                ),
+                detect_queue,
+            )
+
+        stop_event.wait(config.frame_interval_seconds)
+
+    if is_primary:
+        _clear_latest_frame()
+        set_camera_disconnected()
+
+
 def _drainer_loop(
     stop_event: threading.Event,
     config: CameraConfig,
@@ -634,6 +703,10 @@ def _drainer_loop(
     *,
     is_primary: bool,
 ) -> None:
+    if config.image_source:
+        _drainer_loop_image(stop_event, config, detect_queue, is_primary=is_primary)
+        return
+
     reconnect_delay = camera_reconnect_delay_seconds()
     cap: cv2.VideoCapture | None = None
     fail_streak = 0
