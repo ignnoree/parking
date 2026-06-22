@@ -1,0 +1,9 @@
+{
+  "description": "UAE plate test images. Set 'expected' to the ground-truth plate string for each image. Leave empty to run in discovery mode (prints detections, always passes).",
+  "fixtures": [
+    {"image": "IMAGE_TEST1.jpg", "expected": ""},
+    {"image": "image_test2.jpg", "expected": ""},
+    {"image": "imagetest3.jpg",  "expected": ""},
+    {"image": "imagetest4.png",  "expected": ""}
+  ]
+}
